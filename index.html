@@ -154,6 +154,14 @@ tbody tr:hover td{ background:var(--accent-soft); }
 .empty{ padding:2.5rem 1rem; text-align:center; color:var(--muted); }
 .note{ font-size:.8rem; color:var(--muted); margin-top:.6rem; }
 
+.periodo{ display:flex; flex-direction:column; align-items:flex-end; gap:.55rem; max-width:820px; justify-self:end; }
+.periodo-top{ display:flex; align-items:center; gap:.6rem; }
+.periodo-top .field-label{ margin:0; }
+.periodo .chip{ padding:.38rem .7rem; }
+.custom-range{ display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; justify-content:flex-end; font-size:.85rem; color:var(--muted); }
+.custom-range input[type=date]{ background:var(--surface); border:1px solid var(--line); color:var(--ink); padding:.35rem .55rem; border-radius:6px; margin-left:.3rem; color-scheme:inherit; }
+.range-label{ font-size:.85rem; color:var(--muted); }
+#view.loading{ opacity:.45; pointer-events:none; transition:opacity .2s; }
 .fade-in{ animation:fade .4s ease both; }
 @keyframes fade{ from{ opacity:0; transform:translateY(4px);} to{ opacity:1; transform:none; } }
 @media (prefers-reduced-motion: reduce){ .fade-in{ animation:none; } body{ transition:none; } }
@@ -161,6 +169,7 @@ tbody tr:hover td{ background:var(--accent-soft); }
   .grid-2{ grid-template-columns:1fr; }
   .hero{ grid-template-columns:1fr; }
   .months{ justify-content:flex-start; } .field-label{ text-align:left; }
+  .periodo{ align-items:flex-start; justify-self:start; } .custom-range{ justify-content:flex-start; }
   .kpi-value{ font-size:1.7rem; }
   .switcher-meta .badge-demo{ display:none; }
 }
@@ -182,10 +191,7 @@ tbody tr:hover td{ background:var(--accent-soft); }
     <div class="hero-brand" id="heroBrand"></div>
     <p class="hero-sub" id="heroSub"></p>
   </div>
-  <div>
-    <div class="field-label">Mes de pauta</div>
-    <div class="months" id="months"></div>
-  </div>
+  <div class="periodo" id="periodo"></div>
 </header>
 
 <div class="platforms" role="tablist" aria-label="Plataforma">
@@ -205,18 +211,53 @@ const CENTROS = {
   anima:  { nombre:'Ánima Village',  sub:'Los Cabos' },
   antara: { nombre:'Antara',         sub:'Ciudad de México' },
 };
-let MESES = [ {k:'2026-08', l:'Agosto'}, {k:'2026-09', l:'Septiembre'}, {k:'2026-10', l:'Octubre'} ];
 const MES_NOMBRES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-// Endpoints de Vercel (carpeta /api). Si alguno no existe o falla, esa plataforma usa datos de ejemplo.
+const PRIMER_ANIO = 2026;               // primer año que aparece en el selector
+const DEMO_DESDE = '2026-08-01';        // los datos de ejemplo empiezan aquí
+let OBJETIVOS_META = ['Alcance','Interacción','Tráfico a página','Tráfico a web'];
+// Endpoints de Vercel (carpeta /api). Reciben ?since=AAAA-MM-DD&until=AAAA-MM-DD.
+// Si alguno no existe o falla, esa plataforma usa datos de ejemplo.
 const ENDPOINTS = { meta:'/api/meta-data', tiktok:'/api/tiktok-data', google:'/api/google-ads-data' };
-const OBJETIVOS_META = ['Alcance','Interacción','Tráfico a perfil','Tráfico a web'];
 
 /* =========================================================================
-   DATOS DE EJEMPLO
-   Estructura plana, igual a la que devolverán las funciones /api/* al conectar.
-   Meta:   campaña (centro + objetivo) > conjunto (objetivo + mes) > anuncio (concepto)
-   Google: campaña = nombre del centro > grupo de anuncios > anuncio
-   TikTok: cuenta (centro) > campaña > grupo de anuncios > anuncio
+   FECHAS (siempre en hora local; nunca new Date('AAAA-MM-DD'))
+   ========================================================================= */
+const pad = n => String(n).padStart(2,'0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parseLocal = s => { const [y,m,d] = String(s).split('-').map(Number); return new Date(y, m-1, d); };
+const todayStr = () => ymd(new Date());
+function eachDay(since, until){ const out=[]; const d=parseLocal(since), e=parseLocal(until); while(d<=e){ out.push(ymd(d)); d.setDate(d.getDate()+1); } return out; }
+function fmtFechaLarga(s){ const d=parseLocal(s); return `${d.getDate()} de ${MES_NOMBRES[d.getMonth()].toLowerCase()} de ${d.getFullYear()}`; }
+function fmtFechaCorta(s){ const d=parseLocal(s); return `${d.getDate()} ${MES_NOMBRES[d.getMonth()].slice(0,3).toLowerCase()}`; }
+
+/* =========================================================================
+   ESTADO
+   ========================================================================= */
+const hoy = new Date();
+const state = {
+  centro:'artz', plat:'meta', objetivo:'all', topBy:'visitas_perfil', search:'', sort:{}, showAll:{},
+  periodo:{ tipo:'mes', anio:hoy.getFullYear(), mes:hoy.getMonth() },
+  custom:{ since: ymd(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), until: todayStr() },
+};
+const PAGE = 12;
+
+function resolveRange(){
+  const t = todayStr();
+  if(state.periodo.tipo==='custom'){
+    let { since, until } = state.custom;
+    if(until > t) until = t;
+    if(since > until) since = until;
+    return { since, until };
+  }
+  const { anio, mes } = state.periodo;
+  const since = ymd(new Date(anio, mes, 1));
+  let until = ymd(new Date(anio, mes+1, 0));
+  if(until > t) until = t;
+  return { since, until };
+}
+
+/* =========================================================================
+   DATOS DE EJEMPLO (diarios, con la misma forma que devuelve /api)
    ========================================================================= */
 function rng(seedStr){ let h=1779033703^seedStr.length; for(let i=0;i<seedStr.length;i++){h=Math.imul(h^seedStr.charCodeAt(i),3432918353);h=h<<13|h>>>19;} let a=h>>>0; return ()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}; }
 const CONCEPTOS = {
@@ -224,58 +265,51 @@ const CONCEPTOS = {
   anima:  ['Atardecer en Los Cabos','Gastronomía local','Arte y diseño','Noches en la plaza','Familia en vacaciones'],
   antara: ['Día de Muertos','Lujo y moda','Terraza Polanco','Lanzamientos de marcas','Regalos de temporada'],
 };
+let DEMO = null;
 function buildDemo(){
   const meta=[], tiktok=[], google=[];
+  const days = eachDay(DEMO_DESDE, todayStr());
   for(const c of Object.keys(CENTROS)){
-    const objs = c==='anima' ? OBJETIVOS_META : OBJETIVOS_META.slice(0,3);
-    for(const m of MESES){
+    const objs = c==='anima' ? OBJETIVOS_META.slice(0,4) : OBJETIVOS_META.slice(0,3);
+    for(const fecha of days){
+      const d = parseLocal(fecha);
+      // El conjunto se nombra con el mes en que se lanzó; los primeros días del mes
+      // siguen corriendo los del mes anterior (como pasa en la cuenta real).
+      const lanz = d.getDate() <= 2 && d.getMonth()>7 ? new Date(d.getFullYear(), d.getMonth()-1, 1) : d;
+      const mesConjunto = MES_NOMBRES[lanz.getMonth()].toUpperCase();
       for(const o of objs){
-        if(o==='Tráfico a web' && m.k==='2026-08') continue;
         CONCEPTOS[c].forEach((con,i)=>{
           if(i===4 && o!=='Alcance') return;
-          const r=rng(c+m.k+o+con);
-          const gasto = Math.round((o==='Alcance'?9000:o==='Tráfico a web'?7000:6000)*(.55+r()));
-          const cpm = (o==='Alcance'?28:o==='Interacción'?55:o==='Tráfico a perfil'?70:80)*(.75+r()*.5);
+          const r=rng(c+fecha+o+con);
+          const gasto = Math.round((o==='Alcance'?300:o==='Tráfico a web'?230:200)*(.55+r()));
+          const cpm = (o==='Alcance'?28:o==='Interacción'?55:o==='Tráfico a página'?70:80)*(.75+r()*.5);
           const imp = Math.round(gasto/cpm*1000);
-          const freq = (o==='Alcance'?2.6:1.7)+r()*.8;
-          const alc = Math.round(imp/freq);
-          const vp = Math.round(imp*(o==='Tráfico a perfil'?.014:o==='Interacción'?.004:.0015)*(.6+r()*.9));
-          const seg = Math.round(vp*(.08+r()*.14));
-          const clicsWeb = o==='Tráfico a web' ? Math.round(imp*.009*(.7+r()*.6)) : 0;
-          meta.push({ centro:c, campana:`${CENTROS[c].nombre.toUpperCase()} | ${o.toUpperCase()}`, objetivo:o,
-            conjunto:`${o.toUpperCase()} | ${m.l.slice(0,3).toUpperCase()} 2026`, mes:m.k, anuncio:con, concepto:con,
-            gasto, alcance:alc, impresiones:imp, visitas_perfil:vp, seguidores:seg, clics_enlace:clicsWeb });
+          const alc = Math.round(imp/(1.1+r()*.3));
+          const vp = Math.round(imp*(o==='Tráfico a página'?.014:o==='Interacción'?.004:.0015)*(.6+r()*.9));
+          meta.push({ fecha, centro:c, campana:`${c==='anima'?'ANIMA':c.toUpperCase()} | ${o.toUpperCase()}`, objetivo:o,
+            conjunto:`${o.toUpperCase()} | ${mesConjunto}`, anuncio:con,
+            gasto, alcance:alc, impresiones:imp, visitas_perfil:vp, seguidores:Math.round(vp*(.08+r()*.14)),
+            clics_enlace: o==='Tráfico a web' ? Math.round(imp*.009*(.7+r()*.6)) : 0 });
         });
       }
-      // TikTok
       ['Awareness','Video views'].forEach(grupo=>{
         CONCEPTOS[c].slice(0,4).forEach(con=>{
-          const r=rng('tt'+c+m.k+grupo+con);
-          const gasto=Math.round(5000*(.5+r()));
-          const cpm=(grupo==='Awareness'?18:24)*(.75+r()*.5);
-          const imp=Math.round(gasto/cpm*1000);
-          const alc=Math.round(imp/(1.4+r()*.9));
-          const vv=Math.round(imp*(.35+r()*.25));
-          const vv50=Math.round(vv*(.28+r()*.2));
-          const vv100=Math.round(vv50*(.35+r()*.25));
-          const clics=Math.round(imp*.006*(.6+r()*.9));
-          tiktok.push({ centro:c, cuenta:CENTROS[c].nombre, campana:`${CENTROS[c].nombre} | ${grupo}`,
-            grupo:`${grupo} | ${m.l.slice(0,3)} 2026`, mes:m.k, anuncio:con,
-            gasto, alcance:alc, impresiones:imp, clics, vv, vv50, vv100 });
+          const r=rng('tt'+c+fecha+grupo+con);
+          const gasto=Math.round(170*(.5+r())), imp=Math.round(gasto/((grupo==='Awareness'?18:24)*(.75+r()*.5))*1000);
+          const vv=Math.round(imp*(.35+r()*.25)), vv50=Math.round(vv*(.28+r()*.2));
+          tiktok.push({ fecha, centro:c, cuenta:CENTROS[c].nombre, campana:`${CENTROS[c].nombre} | ${grupo}`, grupo:`${grupo} | ${MES_NOMBRES[lanz.getMonth()]}`, anuncio:con,
+            gasto, alcance:Math.round(imp/(1.2+r()*.4)), impresiones:imp, clics:Math.round(imp*.006*(.6+r()*.9)), vv, vv50, vv100:Math.round(vv50*(.35+r()*.25)) });
         });
       });
-      // Google
       [['YouTube in-stream','video'],['Demand Gen','video'],['Display','display'],['Búsqueda de marca','search']].forEach(([grupo,tipo])=>{
         CONCEPTOS[c].slice(0,3).forEach(con=>{
-          const r=rng('g'+c+m.k+grupo+con);
-          const imp=Math.round((tipo==='search'?18000:tipo==='display'?160000:120000)*(.5+r()));
-          const ctr=(tipo==='search'?.07:tipo==='display'?.004:.008)*(.7+r()*.6);
-          const clics=Math.round(imp*ctr);
-          const inter = tipo==='video' ? Math.round(imp*(.28+r()*.2)) : clics;
+          const r=rng('g'+c+fecha+grupo+con);
+          const imp=Math.round((tipo==='search'?600:tipo==='display'?5300:4000)*(.5+r()));
+          const clics=Math.round(imp*(tipo==='search'?.07:tipo==='display'?.004:.008)*(.7+r()*.6));
           const vv25 = tipo==='video' ? Math.round(imp*(.32+r()*.2)) : 0;
-          const vv100 = tipo==='video' ? Math.round(vv25*(.22+r()*.2)) : 0;
-          google.push({ centro:c, campana:CENTROS[c].nombre, grupo, tipo, mes:m.k, anuncio:`${con}${tipo==='search'?' (RSA)':''}`,
-            impresiones:imp, clics, interacciones:inter, vv25, vv100 });
+          google.push({ fecha, centro:c, campana:CENTROS[c].nombre, grupo, tipo, anuncio:`${con}${tipo==='search'?' (RSA)':''}`,
+            gasto:Math.round(imp/1000*(tipo==='search'?400:60)), impresiones:imp, clics, interacciones: tipo==='video' ? Math.round(imp*(.28+r()*.2)) : clics,
+            vv25, vv100: tipo==='video' ? Math.round(vv25*(.22+r()*.2)) : 0 });
         });
       });
     }
@@ -284,32 +318,68 @@ function buildDemo(){
 }
 
 /* =========================================================================
-   CARGA DE DATOS — punto de conexión futura (Meta / TikTok / Google APIs)
+   AGREGACIÓN
    ========================================================================= */
-let DATA = { meta:[], tiktok:[], google:[] };
-let SOURCE = 'demo';
+const META_SUM = ['gasto','alcance','impresiones','visitas_perfil','seguidores','clics_enlace'];
+const TT_SUM = ['gasto','alcance','impresiones','clics','vv','vv50','vv100'];
+const G_SUM = ['gasto','impresiones','clics','interacciones','vv25','vv100'];
+const ID_FIELDS = { meta:['centro','campana','objetivo','conjunto','anuncio'], tiktok:['centro','cuenta','campana','grupo','anuncio'], google:['centro','campana','grupo','tipo','anuncio'] };
+const SUM_FIELDS = { meta:META_SUM, tiktok:TT_SUM, google:G_SUM };
+function aggregate(rows, idFields, sumFields){
+  const m = new Map();
+  for(const r of rows){
+    const k = idFields.map(f=>r[f]).join('\u0001');
+    let o = m.get(k);
+    if(!o){ o={}; idFields.forEach(f=>o[f]=r[f]); sumFields.forEach(f=>o[f]=0); m.set(k,o); }
+    sumFields.forEach(f=>o[f]+=r[f]||0);
+  }
+  return [...m.values()];
+}
+function sum(rows, keys){ const o={}; keys.forEach(k=>o[k]=0); rows.forEach(r=>keys.forEach(k=>o[k]+=r[k]||0)); return o; }
+function groupBy(rows, keyFn){ const m=new Map(); rows.forEach(r=>{ const k=keyFn(r); if(!m.has(k)) m.set(k,[]); m.get(k).push(r); }); return m; }
+
+/* =========================================================================
+   CARGA POR RANGO (con caché)
+   ========================================================================= */
+let DATA = { meta:{rows:[],daily:[]}, tiktok:{rows:[],daily:[]}, google:{rows:[],daily:[]} };
 let SOURCE_STATUS = { meta:'demo', tiktok:'demo', google:'demo' };
-async function loadData(){
-  // Al conectar: reemplazar por fetch('/api/meta-data'), fetch('/api/tiktok-data'), fetch('/api/google-ads-data')
-  // con el patrón de respaldo y marcar SOURCE = 'live'.
-  const demo = buildDemo();
-  await Promise.all(Object.entries(ENDPOINTS).map(async ([plat,url]) => {
+let SOURCE_ERR = {};
+const NO_ENDPOINT = new Set();
+const CACHE = new Map();
+
+function demoFor(plat, range){
+  if(!DEMO) DEMO = buildDemo();
+  const inRange = DEMO[plat].filter(r => r.fecha >= range.since && r.fecha <= range.until);
+  return {
+    rows: aggregate(inRange, ID_FIELDS[plat], SUM_FIELDS[plat]),
+    daily: aggregate(inRange, plat==='meta' ? ['fecha','centro','objetivo'] : ['fecha','centro'], ['gasto','impresiones']),
+  };
+}
+async function loadRange(range){
+  const key = range.since+'|'+range.until;
+  if(CACHE.has(key)){ const c=CACHE.get(key); DATA=c.data; SOURCE_STATUS=c.status; SOURCE_ERR=c.err; return; }
+  const data={}, status={}, errs={};
+  await Promise.all(Object.entries(ENDPOINTS).map(async ([plat,url])=>{
     try{
-      if(location.protocol === 'file:') throw new Error('archivo local');
-      const res = await fetch(url, { headers:{ 'Accept':'application/json' } });
-      if(!res.ok) throw new Error('HTTP '+res.status);
+      if(location.protocol==='file:' || NO_ENDPOINT.has(plat)){ const e=new Error('sin conexión'); e.status=404; throw e; }
+      const res = await fetch(`${url}?since=${range.since}&until=${range.until}`, { headers:{ 'Accept':'application/json' } });
+      if(!res.ok){ const b=await res.json().catch(()=>({})); const e=new Error(b.detail||b.error||('HTTP '+res.status)); e.status=res.status; throw e; }
       const json = await res.json();
       if(!Array.isArray(json.rows)) throw new Error('respuesta sin "rows"');
-      DATA[plat] = json.rows; SOURCE_STATUS[plat] = 'live';
+      data[plat] = { rows: json.rows, daily: Array.isArray(json.daily) ? json.daily : [] };
+      status[plat] = 'live';
     }catch(err){
-      console.warn(`[${plat}] usando datos de ejemplo:`, err.message);
-      DATA[plat] = demo[plat]; SOURCE_STATUS[plat] = 'demo';
+      if(err.status===404) NO_ENDPOINT.add(plat);
+      if(err.status!==404) console.warn(`[${plat}] usando datos de ejemplo:`, err.message);
+      data[plat] = demoFor(plat, range);
+      status[plat] = (err.status && err.status!==404) ? 'error' : 'demo';
+      errs[plat] = err.message;
     }
   }));
-  SOURCE = Object.values(SOURCE_STATUS).some(v=>v==='live') ? 'live' : 'demo';
-  // Con datos reales, los meses salen de los propios datos (formato "AAAA-MM").
-  const keys = [...new Set(Object.values(DATA).flat().map(r=>r.mes).filter(Boolean))].sort();
-  if(keys.length) MESES = keys.map(k=>({ k, l: MES_NOMBRES[+k.slice(5,7)-1] + (keys.some(x=>x.slice(0,4)!==k.slice(0,4)) ? ' '+k.slice(0,4) : '') }));
+  DATA=data; SOURCE_STATUS=status; SOURCE_ERR=errs;
+  // Objetivos: los cuatro base y cualquier otro que venga en los datos reales.
+  [...new Set(DATA.meta.rows.map(r=>r.objetivo))].forEach(o=>{ if(o && !OBJETIVOS_META.includes(o)) OBJETIVOS_META.push(o); });
+  CACHE.set(key, { data, status, err:errs });
 }
 
 /* =========================================================================
@@ -322,38 +392,25 @@ const fMXN2 = v => new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN
 const fPct = v => (isFinite(v)?(v*100):0).toFixed(2)+'\u00a0%';
 const fDec = v => (isFinite(v)?v:0).toFixed(2);
 function fCompact(v){ v=v||0; if(Math.abs(v)>=1e6) return (v/1e6).toFixed(2)+'\u00a0M'; if(Math.abs(v)>=1e4) return (v/1e3).toFixed(1)+'\u00a0k'; return fInt(v); }
-function fCompactMXN(v){ return '$'+fCompact(v); }
+const fCompactMXN = v => '$'+fCompact(v);
 const div = (a,b) => b ? a/b : 0;
 
-/* =========================================================================
-   ESTADO
-   ========================================================================= */
-const state = { centro:'artz', plat:'meta', mes:'all', objetivo:'all', topBy:'visitas_perfil', search:'', sort:{}, showAll:{} };
-const PAGE = 12;
-
-function sum(rows, keys){ const o={}; keys.forEach(k=>o[k]=0); rows.forEach(r=>keys.forEach(k=>o[k]+=r[k]||0)); return o; }
-function groupBy(rows, keyFn){ const m=new Map(); rows.forEach(r=>{ const k=keyFn(r); if(!m.has(k)) m.set(k,[]); m.get(k).push(r); }); return m; }
-function rowsFor(plat){ return DATA[plat].filter(r => r.centro===state.centro && (state.mes==='all'||r.mes===state.mes)); }
-
-/* ===== Definición de métricas por plataforma ===== */
-const META_SUM = ['gasto','alcance','impresiones','visitas_perfil','seguidores','clics_enlace'];
+/* ===== Métricas por plataforma ===== */
 function metaDerive(o){ return { ...o, frecuencia:div(o.impresiones,o.alcance), cpm:div(o.gasto,o.impresiones)*1000, conv:div(o.seguidores,o.visitas_perfil) }; }
 const META_COLS = [
   {k:'gasto',l:'Gasto',f:fMXN},{k:'alcance',l:'Alcance',f:fInt},{k:'impresiones',l:'Impresiones',f:fInt},
   {k:'frecuencia',l:'Frecuencia',f:fDec},{k:'cpm',l:'CPM',f:fMXN2},{k:'visitas_perfil',l:'Visitas al perfil',f:fInt},
   {k:'seguidores',l:'Seguidores IG',f:fInt},{k:'conv',l:'Conv. visita → seguidor',f:fPct},
 ];
-const TT_SUM = ['gasto','alcance','impresiones','clics','vv','vv50','vv100'];
 function ttDerive(o){ return { ...o, cpm:div(o.gasto,o.impresiones)*1000 }; }
 const TT_COLS = [
   {k:'alcance',l:'Alcance',f:fInt},{k:'impresiones',l:'Impresiones',f:fInt},{k:'clics',l:'Clics',f:fInt},
-  {k:'vv',l:'Visualizaciones',f:fInt},{k:'vv50',l:'Visualiz. 50 %',f:fInt},{k:'vv100',l:'Visualiz. 100 %',f:fInt},{k:'cpm',l:'CPM',f:fMXN2},
+  {k:'vv',l:'Visualizaciones',f:fInt},{k:'vv50',l:'Visualiz. 50\u00a0%',f:fInt},{k:'vv100',l:'Visualiz. 100\u00a0%',f:fInt},{k:'cpm',l:'CPM',f:fMXN2},
 ];
-const G_SUM = ['impresiones','clics','interacciones','vv25','vv100'];
 function gDerive(o){ return { ...o, ctr:div(o.clics,o.impresiones) }; }
 const G_COLS = [
   {k:'impresiones',l:'Impresiones',f:fInt},{k:'clics',l:'Clics',f:fInt},{k:'ctr',l:'CTR',f:fPct},
-  {k:'interacciones',l:'Interacciones',f:fInt},{k:'vv25',l:'Visualiz. 25 %',f:fInt},{k:'vv100',l:'Visualiz. 100 %',f:fInt},
+  {k:'interacciones',l:'Interacciones',f:fInt},{k:'vv25',l:'Visualiz. 25\u00a0%',f:fInt},{k:'vv100',l:'Visualiz. 100\u00a0%',f:fInt},
 ];
 
 /* =========================================================================
@@ -363,6 +420,8 @@ const view = document.getElementById('view');
 let charts = [];
 function css(name){ return getComputedStyle(document.body).getPropertyValue(name).trim(); }
 function killCharts(){ charts.forEach(c=>c.destroy()); charts=[]; }
+const rowsFor = plat => DATA[plat].rows.filter(r => r.centro===state.centro);
+const dailyFor = (plat, filterFn=()=>true) => DATA[plat].daily.filter(r => r.centro===state.centro && filterFn(r));
 
 function renderShell(){
   document.body.dataset.centro = state.centro;
@@ -373,21 +432,49 @@ function renderShell(){
     ? `<span class="logo antara"></span><span class="antara-word">ANTARA</span>`
     : `<span class="logo ${state.centro}"></span>`;
   document.getElementById('heroSub').textContent = `${c.nombre}, ${c.sub}. Resultados de pauta en Meta, TikTok y Google Ads.`;
-  document.getElementById('sourceBadge').textContent = SOURCE_STATUS[state.plat]==='live' ? '● En vivo' : 'Datos de ejemplo';
+  const sb = document.getElementById('sourceBadge'); const st = SOURCE_STATUS[state.plat];
+  sb.textContent = st==='live' ? '● En vivo' : st==='error' ? 'Error de conexión · datos de ejemplo' : 'Datos de ejemplo';
+  sb.title = st==='error' ? (SOURCE_ERR[state.plat]||'') : '';
   document.title = `${c.nombre} · Paid Media`;
-  const mWrap = document.getElementById('months');
-  mWrap.innerHTML = [{k:'all',l:'Todos'},...MESES].map(m=>`<button class="chip" data-mes="${m.k}" aria-pressed="${state.mes===m.k}">${m.l}</button>`).join('');
-  mWrap.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ state.mes=b.dataset.mes; render(); });
+  renderPeriodo();
+}
+
+function renderPeriodo(){
+  const t = new Date(); const p = state.periodo;
+  const anios = []; for(let y=t.getFullYear(); y>=PRIMER_ANIO; y--) anios.push(y);
+  const r = resolveRange();
+  document.getElementById('periodo').innerHTML = `
+    <div class="periodo-top">
+      <label class="field-label" for="anio">Periodo</label>
+      <select id="anio" aria-label="Año">${anios.map(y=>`<option value="${y}" ${y===p.anio?'selected':''}>${y}</option>`).join('')}</select>
+    </div>
+    <div class="months">
+      ${MES_NOMBRES.map((m,i)=>{ const futuro = p.anio>t.getFullYear() || (p.anio===t.getFullYear() && i>t.getMonth());
+        return `<button class="chip" data-mes="${i}" aria-pressed="${p.tipo==='mes' && p.mes===i}" ${futuro?'disabled':''} title="${m} ${p.anio}">${m.slice(0,3)}</button>`; }).join('')}
+      <button class="chip" data-custom aria-pressed="${p.tipo==='custom'}">Personalizado</button>
+    </div>
+    ${p.tipo==='custom' ? `<div class="custom-range">
+      <label>Desde <input type="date" id="cSince" value="${state.custom.since}" min="${PRIMER_ANIO}-01-01" max="${todayStr()}"></label>
+      <label>Hasta <input type="date" id="cUntil" value="${state.custom.until}" min="${PRIMER_ANIO}-01-01" max="${todayStr()}"></label>
+      <button class="chip" id="cApply" aria-pressed="true">Aplicar</button>
+    </div>` : ''}
+    <div class="range-label">${r.since===r.until ? fmtFechaLarga(r.since) : `Del ${fmtFechaLarga(r.since)} al ${fmtFechaLarga(r.until)}`}</div>`;
+  document.getElementById('anio').onchange = e => { const y=+e.target.value; state.periodo.anio=y;
+    if(state.periodo.tipo==='mes'){ const lim = y===t.getFullYear() ? t.getMonth() : 11; state.periodo.mes = Math.min(state.periodo.mes, lim); refresh(); } else renderPeriodo(); };
+  document.querySelectorAll('#periodo [data-mes]').forEach(b=>b.onclick=()=>{ state.periodo={ tipo:'mes', anio:state.periodo.anio, mes:+b.dataset.mes }; refresh(); });
+  document.querySelector('#periodo [data-custom]').onclick = ()=>{ state.periodo={ ...state.periodo, tipo:'custom' }; refresh(); };
+  const ap = document.getElementById('cApply');
+  if(ap) ap.onclick = ()=>{ const s=document.getElementById('cSince').value, u=document.getElementById('cUntil').value;
+    if(!s || !u) return; state.custom = s<=u ? { since:s, until:u } : { since:u, until:s }; refresh(); };
 }
 
 function kpiStrip(items){
   return `<div class="kpis fade-in">${items.map(i=>`<div class="kpi"><div class="kpi-label">${i.l}</div><div class="kpi-value">${i.v}</div>${i.n?`<div class="kpi-note">${i.n}</div>`:''}</div>`).join('')}</div>`;
 }
-
 function tableHTML(id, firstLabel, rows, cols, total){
   const s = state.sort[id] || {k:cols[0].k, dir:'desc'};
-  const sorted = [...rows].sort((a,b)=> s.k==='name' ? (s.dir==='asc'?1:-1)*a.name.localeCompare(b.name) : (s.dir==='asc'?1:-1)*((a[s.k]||0)-(b[s.k]||0)));
-  if(!rows.length) return `<div class="table-wrap"><div class="empty">No hay datos con estos filtros. Prueba con otro mes u objetivo.</div></div>`;
+  const sorted = [...rows].sort((a,b)=> s.k==='name' ? (s.dir==='asc'?1:-1)*String(a.name).localeCompare(String(b.name)) : (s.dir==='asc'?1:-1)*((a[s.k]||0)-(b[s.k]||0)));
+  if(!rows.length) return `<div class="table-wrap"><div class="empty">No hay datos en este periodo. Prueba con otro mes u objetivo.</div></div>`;
   return `<div class="table-wrap"><table data-table="${id}"><thead><tr>
     <th data-k="name" ${s.k==='name'?`data-dir="${s.dir}"`:''}>${firstLabel}</th>
     ${cols.map(c=>`<th data-k="${c.k}" ${s.k===c.k?`data-dir="${s.dir}"`:''}>${c.l}</th>`).join('')}
@@ -403,29 +490,44 @@ function bindSort(){
       state.sort[id] = { k, dir: cur && cur.k===k && cur.dir==='desc' ? 'asc' : 'desc' }; render(); };
   });
 }
-
 function chartDefaults(){
   Chart.defaults.font.family = css('--body').split(',')[0].replace(/'/g,'');
   Chart.defaults.color = css('--muted');
   Chart.defaults.borderColor = css('--line');
 }
-function monthlySeries(rows, sumKeys, derive){
-  const ms = state.mes==='all' ? MESES : MESES.filter(m=>m.k===state.mes);
-  return { labels: ms.map(m=>m.l), data: ms.map(m=>derive(sum(rows.filter(r=>r.mes===m.k), sumKeys))) };
+// Serie de tiempo: por día hasta 62 días; por mes en rangos más largos.
+function timeSeries(daily){
+  const r = resolveRange(); const days = eachDay(r.since, r.until);
+  const byMonth = days.length > 62;
+  const keyOf = f => byMonth ? f.slice(0,7) : f;
+  const keys = [...new Set(days.map(keyOf))];
+  const acc = new Map(keys.map(k=>[k,{gasto:0,impresiones:0}]));
+  daily.forEach(d=>{ const a=acc.get(keyOf(d.fecha)); if(a){ a.gasto+=d.gasto||0; a.impresiones+=d.impresiones||0; } });
+  return { byMonth, labels: keys.map(k=> byMonth ? MES_NOMBRES[+k.slice(5,7)-1].slice(0,3)+' '+k.slice(0,4) : fmtFechaCorta(k)), data: keys.map(k=>acc.get(k)) };
+}
+function spendChart(canvasId, daily){
+  const ts = timeSeries(daily);
+  charts.push(new Chart(document.getElementById(canvasId), { data:{ labels:ts.labels, datasets:[
+      { type:'bar', order:1, label:'Gasto', data:ts.data.map(d=>d.gasto), backgroundColor:css('--c3'), yAxisID:'y', borderRadius:2 },
+      { type:'line', order:0, label:'Impresiones', data:ts.data.map(d=>d.impresiones), borderColor:css('--c1'), backgroundColor:css('--c1'), yAxisID:'y1', tension:.3, pointRadius:ts.labels.length>20?0:3 } ]},
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+      plugins:{ legend:{position:'bottom', labels:{boxWidth:10}}, tooltip:{ callbacks:{ label:c=> c.dataset.label+': '+(c.dataset.label==='Gasto'?fMXN(c.raw):fInt(c.raw)) } } },
+      scales:{ x:{grid:{display:false}, ticks:{maxRotation:0, autoSkip:true, maxTicksLimit:12}}, y:{ beginAtZero:true, ticks:{callback:v=>fCompactMXN(v)} }, y1:{ position:'right', beginAtZero:true, grid:{display:false}, ticks:{callback:v=>fCompact(v)} } } } }));
+  return ts.byMonth;
 }
 
 /* ----- META ----- */
 function renderMeta(){
   const base = rowsFor('meta');
-  const objsDisponibles = OBJETIVOS_META.filter(o=>base.some(r=>r.objetivo===o) || DATA.meta.some(r=>r.centro===state.centro && r.objetivo===o));
-  if(state.objetivo!=='all' && !objsDisponibles.includes(state.objetivo)) state.objetivo='all';
+  const presentes = new Set(base.map(r=>r.objetivo));
+  if(state.objetivo!=='all' && !presentes.has(state.objetivo)) state.objetivo='all';
   const rows = base.filter(r=>state.objetivo==='all'||r.objetivo===state.objetivo);
   const t = metaDerive(sum(rows, META_SUM));
-  const showWeb = rows.some(r=>r.clics_enlace>0);
+  const showWeb = rows.some(r=>r.clics_enlace>0) || state.objetivo==='Tráfico a web';
 
   let h = `<div class="toolbar"><span class="lbl">Objetivo</span>
-    ${['all',...OBJETIVOS_META].map(o=>{ const ok = o==='all'||objsDisponibles.includes(o);
-      return `<button class="chip" data-obj="${o}" aria-pressed="${state.objetivo===o}" ${ok?'':'disabled title="Sin campañas con este objetivo"'}>${o==='all'?'Todos':o}</button>`; }).join('')}
+    ${['all',...OBJETIVOS_META].map(o=>{ const ok = o==='all'||presentes.has(o);
+      return `<button class="chip" data-obj="${o}" aria-pressed="${state.objetivo===o}" ${ok?'':'disabled title="Sin campañas con este objetivo en el periodo"'}>${o==='all'?'Todos':o}</button>`; }).join('')}
   </div>`;
   h += kpiStrip([
     {l:'Gasto', v:fCompactMXN(t.gasto)},
@@ -434,62 +536,50 @@ function renderMeta(){
     {l:'Frecuencia', v:fDec(t.frecuencia)},
     {l:'CPM', v:fMXN2(t.cpm)},
     {l:'Visitas al perfil', v:fCompact(t.visitas_perfil)},
-    {l:'Seguidores IG', v:fCompact(t.seguidores), n:'Nuevos en el periodo'},
+    {l:'Seguidores IG', v:fCompact(t.seguidores), n:'Atribuidos a anuncios'},
     {l:'Conv. visita → seguidor', v:fPct(t.conv)},
     ...(showWeb?[{l:'Clics al sitio web', v:fCompact(t.clics_enlace)}]:[])
   ]);
-
   h += `<div class="section grid-2">
-    <div><h2 class="section-title">Inversión y alcance por mes</h2><p class="section-desc">Gasto en barras, alcance en línea.</p><div class="panel"><div class="chart-box"><canvas id="c1"></canvas></div></div></div>
+    <div><h2 class="section-title" id="c1t">Gasto e impresiones por día</h2><p class="section-desc">El gasto se cuenta en la fecha en que ocurrió.</p><div class="panel"><div class="chart-box"><canvas id="c1"></canvas></div></div></div>
     <div><h2 class="section-title">CPM por objetivo</h2><p class="section-desc">Cuánto cuesta cada mil impresiones según el objetivo.</p><div class="panel"><div class="chart-box"><canvas id="c2"></canvas></div></div></div>
   </div>`;
 
-  // Top anuncios (agregado por anuncio dentro del filtro)
-  const adAgg = [...groupBy(rows, r=>r.anuncio+'||'+r.objetivo)].map(([k,rs])=>({ name:rs[0].anuncio, sub:rs[0].objetivo, objetivo:rs[0].objetivo, ...metaDerive(sum(rs,META_SUM)) }));
+  const adAgg = [...groupBy(rows, r=>r.anuncio+'||'+r.objetivo)].map(([k,rs])=>({ name:rs[0].anuncio, objetivo:rs[0].objetivo, ...metaDerive(sum(rs,META_SUM)) }));
   const topOpts = [['visitas_perfil','Visitas al perfil'],['seguidores','Seguidores IG'],['alcance','Alcance'],['impresiones','Impresiones'],['cpm','CPM más bajo'],['conv','Conversión visita → seguidor']];
   const by = state.topBy; const asc = by==='cpm';
-  const top = [...adAgg].filter(a=>by!=='conv'||a.visitas_perfil>50).sort((a,b)=>asc?a[by]-b[by]:b[by]-a[by]).slice(0,5);
+  const top = [...adAgg].filter(a=>(by!=='conv'||a.visitas_perfil>50) && (by!=='cpm'||a.impresiones>0)).sort((a,b)=>asc?a[by]-b[by]:b[by]-a[by]).slice(0,5);
   const maxV = Math.max(...top.map(a=>a[by]))||1;
   const fmtBy = {visitas_perfil:fInt,seguidores:fInt,alcance:fInt,impresiones:fInt,cpm:fMXN2,conv:fPct}[by];
   h += `<div class="section"><div class="top-head"><div><h2 class="section-title">Top anuncios</h2><p class="section-desc" style="margin:0">Los cinco conceptos con mejor resultado en el periodo y objetivo elegidos.</p></div>
-    <label><span class="lbl" style="font-size:.85rem;color:var(--muted);margin-right:.5rem">Ordenar por</span><select id="topBy">${topOpts.map(([k,l])=>`<option value="${k}" ${k===by?'selected':''}>${l}</option>`).join('')}</select></label></div>
+    <label><span style="font-size:.85rem;color:var(--muted);margin-right:.5rem">Ordenar por</span><select id="topBy">${topOpts.map(([k,l])=>`<option value="${k}" ${k===by?'selected':''}>${l}</option>`).join('')}</select></label></div>
     <div class="top-list">${top.map((a,i)=>`<article class="top-card fade-in" style="animation-delay:${i*40}ms">
       <div class="top-rank">${i+1}</div><div class="top-name">${a.name}</div><div class="top-meta">${a.objetivo}</div>
       <div class="top-value">${fmtBy(a[by])}<small>${topOpts.find(o=>o[0]===by)[1].toLowerCase()}</small></div>
       <div class="top-mini"><span>${fMXN(a.gasto)}</span><span>${fCompact(a.alcance)} alcance</span><span>CPM ${fMXN2(a.cpm)}</span></div>
-      <div class="bar"><i style="width:${asc? (Math.min(...top.map(x=>x.cpm))/a.cpm*100) : (a[by]/maxV*100)}%"></i></div>
-    </article>`).join('') || '<div class="empty">Sin anuncios en este filtro.</div>'}</div></div>`;
+      <div class="bar"><i style="width:${asc ? (Math.min(...top.map(x=>x.cpm))/a.cpm*100) : (a[by]/maxV*100)}%"></i></div>
+    </article>`).join('') || '<div class="empty">Sin anuncios en este periodo.</div>'}</div></div>`;
 
-  // Por conjunto de anuncios
   const cols = showWeb ? [...META_COLS, {k:'clics_enlace',l:'Clics al sitio',f:fInt}] : META_COLS;
-  const sets = [...groupBy(rows, r=>r.conjunto)].map(([k,rs])=>({ name:k, sub:rs[0].campana, ...metaDerive(sum(rs,META_SUM)) }));
-  h += `<div class="section"><h2 class="section-title">Por conjunto de anuncios</h2><p class="section-desc">Cada conjunto es un objetivo en un mes de pauta. Toca una columna para ordenar.</p>${tableHTML('meta-sets','Conjunto de anuncios', sets, cols, t)}</div>`;
-
-  // Por anuncio
-  const ads = rows.map(r=>({ name:r.anuncio, sub:r.conjunto, ...metaDerive(r) })).filter(a=>!state.search || a.name.toLowerCase().includes(state.search.toLowerCase()));
+  const sets = [...groupBy(rows, r=>r.campana+'||'+r.conjunto)].map(([k,rs])=>({ name:rs[0].conjunto, sub:rs[0].campana, ...metaDerive(sum(rs,META_SUM)) }));
+  h += `<div class="section"><h2 class="section-title">Por conjunto de anuncios</h2><p class="section-desc">Solo lo que cada conjunto gastó dentro del periodo elegido. Toca una columna para ordenar.</p>${tableHTML('meta-sets','Conjunto de anuncios', sets, cols, t)}</div>`;
+  const ads = rows.map(r=>({ name:r.anuncio, sub:r.conjunto, ...metaDerive(r) })).filter(a=>!state.search || String(a.name).toLowerCase().includes(state.search.toLowerCase()));
   h += `<div class="section"><div class="top-head"><div><h2 class="section-title">Por anuncio</h2><p class="section-desc" style="margin:0">Cada fila es un concepto de contenido dentro de su conjunto.</p></div>
     <input class="search" id="search" type="search" placeholder="Buscar concepto" value="${state.search}"></div>${tableHTML('meta-ads','Anuncio', ads, cols)}
-    <p class="note">El alcance y la frecuencia de los totales se suman entre filas; al conectar Meta se usará el alcance único que reporta la API para cada nivel.</p></div>`;
+    <p class="note">Alcance y frecuencia en totales y conjuntos se suman entre anuncios, así que pueden quedar algo arriba del alcance único que muestra Ads Manager.</p></div>`;
 
   view.innerHTML = h;
   view.querySelectorAll('[data-obj]').forEach(b=>b.onclick=()=>{ state.objetivo=b.dataset.obj; render(); });
   document.getElementById('topBy').onchange = e => { state.topBy=e.target.value; render(); };
-  const s=document.getElementById('search'); s.oninput = e => { state.search=e.target.value; const pos=e.target.selectionStart; render(); const n=document.getElementById('search'); n.focus(); n.setSelectionRange(pos,pos); };
-  bindSort();
-
-  chartDefaults();
-  const ms = monthlySeries(rows, META_SUM, metaDerive);
-  charts.push(new Chart(document.getElementById('c1'), { data:{ labels:ms.labels, datasets:[
-      { type:'bar', order:1, label:'Gasto', data:ms.data.map(d=>d.gasto), backgroundColor:css('--c3'), yAxisID:'y', borderRadius:2 },
-      { type:'line', order:0, label:'Alcance', data:ms.data.map(d=>d.alcance), borderColor:css('--c1'), backgroundColor:css('--c1'), yAxisID:'y1', tension:.3, pointRadius:4 } ]},
-    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-      plugins:{ legend:{position:'bottom', labels:{boxWidth:10}}, tooltip:{ callbacks:{ label:c=> c.dataset.label+': '+(c.dataset.label==='Gasto'?fMXN(c.raw):fInt(c.raw)) } } },
-      scales:{ x:{grid:{display:false}}, y:{ ticks:{callback:v=>fCompactMXN(v)} }, y1:{ position:'right', beginAtZero:true, grid:{display:false}, ticks:{callback:v=>fCompact(v)} } } } }));
-  const byObj = OBJETIVOS_META.filter(o=>base.some(r=>r.objetivo===o)).map(o=>({ o, ...metaDerive(sum(base.filter(r=>r.objetivo===o),META_SUM)) }));
+  document.getElementById('search').oninput = e => { state.search=e.target.value; const pos=e.target.selectionStart; render(); const n=document.getElementById('search'); n.focus(); n.setSelectionRange(pos,pos); };
+  bindSort(); chartDefaults();
+  const byMonth = spendChart('c1', dailyFor('meta', d => state.objetivo==='all' || d.objetivo===state.objetivo));
+  if(byMonth) document.getElementById('c1t').textContent = 'Gasto e impresiones por mes';
+  const byObj = OBJETIVOS_META.filter(o=>presentes.has(o)).map(o=>({ o, ...metaDerive(sum(base.filter(r=>r.objetivo===o),META_SUM)) }));
   charts.push(new Chart(document.getElementById('c2'), { type:'bar', data:{ labels:byObj.map(x=>x.o), datasets:[{ label:'CPM', data:byObj.map(x=>x.cpm),
       backgroundColor:byObj.map(x=> state.objetivo==='all'||state.objetivo===x.o ? css('--c1') : css('--c3')), borderRadius:2 }]},
     options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>'CPM '+fMXN2(c.raw)}}},
-      scales:{ x:{ ticks:{callback:v=>'$'+v} }, y:{grid:{display:false}} } } }));
+      scales:{ x:{ beginAtZero:true, ticks:{callback:v=>'$'+v} }, y:{grid:{display:false}} } } }));
 }
 
 /* ----- TIKTOK ----- */
@@ -498,14 +588,14 @@ function renderTikTok(){
   const t = ttDerive(sum(rows, TT_SUM));
   let h = kpiStrip([
     {l:'Alcance', v:fCompact(t.alcance)},{l:'Impresiones', v:fCompact(t.impresiones)},{l:'Clics', v:fCompact(t.clics)},
-    {l:'Visualizaciones', v:fCompact(t.vv)},{l:'Visualiz. al 50 %', v:fCompact(t.vv50), n:fPct(div(t.vv50,t.vv))+' de las vistas'},
-    {l:'Visualiz. al 100 %', v:fCompact(t.vv100), n:fPct(div(t.vv100,t.vv))+' de las vistas'},{l:'CPM', v:fMXN2(t.cpm)}
+    {l:'Visualizaciones', v:fCompact(t.vv)},{l:'Visualiz. al 50\u00a0%', v:fCompact(t.vv50), n:fPct(div(t.vv50,t.vv))+' de las vistas'},
+    {l:'Visualiz. al 100\u00a0%', v:fCompact(t.vv100), n:fPct(div(t.vv100,t.vv))+' de las vistas'},{l:'CPM', v:fMXN2(t.cpm)}
   ]);
   h += `<div class="section grid-2">
     <div><h2 class="section-title">Retención de video por anuncio</h2><p class="section-desc">Cuántas visualizaciones llegan a la mitad y al final.</p><div class="panel"><div class="chart-box"><canvas id="c1"></canvas></div></div></div>
-    <div><h2 class="section-title">Alcance e impresiones por mes</h2><p class="section-desc">Cuenta de TikTok de ${CENTROS[state.centro].nombre}.</p><div class="panel"><div class="chart-box"><canvas id="c2"></canvas></div></div></div>
+    <div><h2 class="section-title" id="c2t">Gasto e impresiones por día</h2><p class="section-desc">Cuenta de TikTok de ${CENTROS[state.centro].nombre}.</p><div class="panel"><div class="chart-box"><canvas id="c2"></canvas></div></div></div>
   </div>`;
-  const grupos = [...groupBy(rows, r=>r.grupo)].map(([k,rs])=>({ name:k, sub:rs[0].campana, ...ttDerive(sum(rs,TT_SUM)) }));
+  const grupos = [...groupBy(rows, r=>r.campana+'||'+r.grupo)].map(([k,rs])=>({ name:rs[0].grupo, sub:rs[0].campana, ...ttDerive(sum(rs,TT_SUM)) }));
   h += `<div class="section"><h2 class="section-title">Por grupo de anuncios</h2><p class="section-desc">Toca una columna para ordenar.</p>${tableHTML('tt-sets','Grupo de anuncios',grupos,TT_COLS,t)}</div>`;
   const ads = rows.map(r=>({ name:r.anuncio, sub:r.grupo, ...ttDerive(r) }));
   h += `<div class="section"><h2 class="section-title">Por anuncio</h2><p class="section-desc">Cada fila es un video dentro de su grupo.</p>${tableHTML('tt-ads','Anuncio',ads,TT_COLS)}</div>`;
@@ -513,16 +603,11 @@ function renderTikTok(){
   const adAgg = [...groupBy(rows,r=>r.anuncio)].map(([k,rs])=>({k, ...sum(rs,TT_SUM)}));
   charts.push(new Chart(document.getElementById('c1'), { type:'bar', data:{ labels:adAgg.map(a=>a.k), datasets:[
       {label:'Visualizaciones', data:adAgg.map(a=>a.vv), backgroundColor:css('--c3'), borderRadius:2},
-      {label:'Al 50 %', data:adAgg.map(a=>a.vv50), backgroundColor:css('--c2'), borderRadius:2},
-      {label:'Al 100 %', data:adAgg.map(a=>a.vv100), backgroundColor:css('--c1'), borderRadius:2} ]},
+      {label:'Al 50\u00a0%', data:adAgg.map(a=>a.vv50), backgroundColor:css('--c2'), borderRadius:2},
+      {label:'Al 100\u00a0%', data:adAgg.map(a=>a.vv100), backgroundColor:css('--c1'), borderRadius:2} ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{boxWidth:10}}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fInt(c.raw)}}},
-      scales:{ x:{grid:{display:false}, ticks:{maxRotation:0, autoSkip:false, callback:function(v){ const l=this.getLabelForValue(v); return l.length>14? l.slice(0,13)+'…':l; }}}, y:{ticks:{callback:v=>fCompact(v)}} } } }));
-  const ms = monthlySeries(rows, TT_SUM, ttDerive);
-  charts.push(new Chart(document.getElementById('c2'), { data:{ labels:ms.labels, datasets:[
-      {type:'bar',order:1,label:'Impresiones',data:ms.data.map(d=>d.impresiones),backgroundColor:css('--c3'),borderRadius:2},
-      {type:'line',order:0,label:'Alcance',data:ms.data.map(d=>d.alcance),borderColor:css('--c1'),backgroundColor:css('--c1'),tension:.3,pointRadius:4} ]},
-    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false}, plugins:{legend:{position:'bottom',labels:{boxWidth:10}}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fInt(c.raw)}}},
-      scales:{ x:{grid:{display:false}}, y:{ticks:{callback:v=>fCompact(v)}} } } }));
+      scales:{ x:{grid:{display:false}, ticks:{maxRotation:0, autoSkip:false, callback:function(v){ const l=String(this.getLabelForValue(v)); return l.length>14? l.slice(0,13)+'…':l; }}}, y:{beginAtZero:true, ticks:{callback:v=>fCompact(v)}} } } }));
+  if(spendChart('c2', dailyFor('tiktok'))) document.getElementById('c2t').textContent = 'Gasto e impresiones por mes';
 }
 
 /* ----- GOOGLE ----- */
@@ -531,12 +616,12 @@ function renderGoogle(){
   const t = gDerive(sum(rows, G_SUM));
   let h = kpiStrip([
     {l:'Impresiones', v:fCompact(t.impresiones)},{l:'Clics', v:fCompact(t.clics)},{l:'CTR', v:fPct(t.ctr)},
-    {l:'Interacciones', v:fCompact(t.interacciones)},{l:'Visualiz. al 25 %', v:fCompact(t.vv25)},
-    {l:'Visualiz. al 100 %', v:fCompact(t.vv100), n:fPct(div(t.vv100,t.vv25))+' de las que llegan al 25 %'}
+    {l:'Interacciones', v:fCompact(t.interacciones)},{l:'Visualiz. al 25\u00a0%', v:fCompact(t.vv25)},
+    {l:'Visualiz. al 100\u00a0%', v:fCompact(t.vv100), n:fPct(div(t.vv100,t.vv25))+' de las que llegan al 25\u00a0%'}
   ]);
   h += `<div class="section grid-2">
     <div><h2 class="section-title">Clics y CTR por grupo</h2><p class="section-desc">Campaña ${CENTROS[state.centro].nombre}.</p><div class="panel"><div class="chart-box"><canvas id="c1"></canvas></div></div></div>
-    <div><h2 class="section-title">Video: del 25 % al 100 %</h2><p class="section-desc">Solo grupos de video (YouTube y Demand Gen).</p><div class="panel"><div class="chart-box"><canvas id="c2"></canvas></div></div></div>
+    <div><h2 class="section-title">Video: del 25\u00a0% al 100\u00a0%</h2><p class="section-desc">Solo grupos de video (YouTube y Demand Gen).</p><div class="panel"><div class="chart-box"><canvas id="c2"></canvas></div></div></div>
   </div>`;
   const grupos = [...groupBy(rows,r=>r.grupo)].map(([k,rs])=>({ name:k, sub:rs[0].campana, ...gDerive(sum(rs,G_SUM)) }));
   h += `<div class="section"><h2 class="section-title">Por grupo de anuncios</h2><p class="section-desc">Toca una columna para ordenar.</p>${tableHTML('g-sets','Grupo de anuncios',grupos,G_COLS,t)}</div>`;
@@ -547,18 +632,28 @@ function renderGoogle(){
       {type:'bar',order:1,label:'Clics',data:grupos.map(g=>g.clics),backgroundColor:css('--c3'),yAxisID:'y',borderRadius:2},
       {type:'line',order:0,label:'CTR',data:grupos.map(g=>g.ctr*100),borderColor:css('--c1'),backgroundColor:css('--c1'),yAxisID:'y1',pointRadius:4,tension:.3} ]},
     options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false}, plugins:{legend:{position:'bottom',labels:{boxWidth:10}}, tooltip:{callbacks:{label:c=>c.dataset.label==='CTR'?'CTR '+c.raw.toFixed(2)+'\u00a0%':'Clics '+fInt(c.raw)}}},
-      scales:{ x:{grid:{display:false}}, y:{ticks:{callback:v=>fCompact(v)}}, y1:{position:'right',grid:{display:false},ticks:{callback:v=>v+'\u00a0%'}} } } }));
+      scales:{ x:{grid:{display:false}}, y:{beginAtZero:true, ticks:{callback:v=>fCompact(v)}}, y1:{position:'right',beginAtZero:true,grid:{display:false},ticks:{callback:v=>v+'\u00a0%'}} } } }));
   const vid = grupos.filter(g=>g.vv25>0);
   charts.push(new Chart(document.getElementById('c2'), { type:'bar', data:{ labels:vid.map(g=>g.name), datasets:[
-      {label:'Al 25 %',data:vid.map(g=>g.vv25),backgroundColor:css('--c3'),borderRadius:2},
-      {label:'Al 100 %',data:vid.map(g=>g.vv100),backgroundColor:css('--c1'),borderRadius:2} ]},
+      {label:'Al 25\u00a0%',data:vid.map(g=>g.vv25),backgroundColor:css('--c3'),borderRadius:2},
+      {label:'Al 100\u00a0%',data:vid.map(g=>g.vv100),backgroundColor:css('--c1'),borderRadius:2} ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{boxWidth:10}}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fInt(c.raw)}}},
-      scales:{ x:{grid:{display:false}}, y:{ticks:{callback:v=>fCompact(v)}} } } }));
+      scales:{ x:{grid:{display:false}}, y:{beginAtZero:true, ticks:{callback:v=>fCompact(v)}} } } }));
 }
 
 function render(){
   killCharts(); renderShell();
   if(state.plat==='meta') renderMeta(); else if(state.plat==='tiktok') renderTikTok(); else renderGoogle();
+}
+let loadSeq = 0;
+async function refresh(){
+  const seq = ++loadSeq;
+  view.classList.add('loading'); renderPeriodo();
+  await loadRange(resolveRange());
+  if(seq !== loadSeq) return;           // llegó otra selección mientras cargaba
+  view.classList.remove('loading');
+  state.showAll = {};
+  render();
 }
 
 /* ===== Eventos ===== */
@@ -566,7 +661,7 @@ document.querySelectorAll('.centro-btn').forEach(b=>b.onclick=()=>{ state.centro
 document.querySelectorAll('.plat-btn').forEach(b=>b.onclick=()=>{ state.plat=b.dataset.plat; render(); });
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', ()=>render());
 
-(async ()=>{ await loadData(); render(); })();
+refresh();
 </script>
 </body>
 </html>
