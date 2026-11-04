@@ -22,6 +22,17 @@ Cada endpoint debe responder `{ "rows": [ ... ] }` con este formato por fila:
 - **TikTok:** centro, cuenta, campana, grupo, mes, anuncio, gasto, alcance, impresiones, clics, vv, vv50, vv100
 - **Google:** centro, campana, grupo, tipo, mes, anuncio, impresiones, clics, interacciones, vv25, vv100
 
+## Google Sheets
+
+El dashboard lee el Sheet "Dash | KPI's Ánima & Artz" (compartido como lector con enlace):
+- TikTok: pestañas `Query_Tik Tok ARTZ`, `Query_TikTok ANIMA`, `Query_TikTok Antara`
+  (columnas Month, Date, Campaign name, Ad group name, Ad name, Cost, Reach, Impressions,
+  Clicks, Video views, Video views at 50%, Video views at 100%). El mes se toma de la columna Month.
+- Seguidores: pestaña `Seguidores IG` (Mes, Plaza, Anuncio, Seguimientos IG). Se empata con Meta
+  por nombre de anuncio.
+
+Si se renombra una pestaña o columna, hay que actualizar `TIKTOK_TABS` / `FOLLOW_TAB` en index.html.
+
 ## Variables de entorno en Vercel
 
 **Meta:** `META_ACCESS_TOKEN` (Secret), `META_AD_ACCOUNT_ID` (Config)

@@ -102,8 +102,8 @@ body::before{ content:""; position:fixed; inset:0 0 auto; height:env(safe-area-i
 .toolbar .lbl{ font-size:.85rem; color:var(--muted); margin-right:.25rem; }
 
 /* ===== KPI: una franja, no tarjetas ===== */
-.kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); border-top:1px solid var(--ink); border-bottom:1px solid var(--line); margin-bottom:2.25rem; }
-.kpi{ padding:1.1rem 1rem 1.2rem; border-right:1px solid var(--line); }
+.kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); border-top:1px solid var(--ink); border-bottom:1px solid var(--line); margin-bottom:2.25rem; }
+.kpi{ padding:1.1rem 1rem 1.2rem; border-right:1px solid var(--line); min-width:0; overflow:hidden; }
 .kpi:last-child{ border-right:none; }
 .kpi-label{ font-size:.8rem; color:var(--muted); font-weight:500; }
 .kpi-value{ white-space:nowrap; font-family:var(--display); font-size:clamp(1.6rem,2.2vw,2.1rem); line-height:1.1; margin-top:.35rem; font-weight:500; font-variant-numeric:lining-nums tabular-nums; }
@@ -137,7 +137,9 @@ body[data-centro="antara"] .top-card{ border-radius:18px; }
 .top-meta{ color:var(--muted); font-size:.76rem; margin-top:.25rem; }
 .top-value{ font-family:var(--display); font-size:1.5rem; margin-top:.6rem; }
 .top-value small{ font-family:var(--body); font-size:.75rem; color:var(--muted); margin-left:.3rem; }
-.top-stats{ display:grid; grid-template-columns:repeat(3,auto); justify-content:space-between; gap:.5rem; margin:.55rem 0 .9rem; }
+.top-stats{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem; margin:.55rem 0 .9rem; }
+.top-stats > div{ min-width:0; }
+.top-stats dd{ overflow:hidden; text-overflow:ellipsis; }
 .top-stats dt{ font-size:.68rem; color:var(--muted); }
 .top-stats dd{ font-size:.8rem; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .bar{ height:3px; background:var(--accent-soft); margin-top:auto; }
@@ -206,6 +208,7 @@ tbody tr:hover td{ background:var(--accent-soft); }
 </header>
 
 <div class="platforms" role="tablist" aria-label="Plataforma">
+  <button class="plat-btn" role="tab" data-plat="general">General</button>
   <button class="plat-btn" role="tab" data-plat="meta">Meta Ads</button>
   <button class="plat-btn" role="tab" data-plat="tiktok">TikTok Ads</button>
   <button class="plat-btn" role="tab" data-plat="google">Google Ads</button>
@@ -228,7 +231,13 @@ const DEMO_DESDE = '2026-08-01';        // los datos de ejemplo empiezan aquí
 let OBJETIVOS_META = ['Alcance','Interacción','Tráfico a página','Tráfico a web'];
 // Endpoints de Vercel (carpeta /api). Reciben ?since=AAAA-MM-DD&until=AAAA-MM-DD.
 // Si alguno no existe o falla, esa plataforma usa datos de ejemplo.
-const ENDPOINTS = { meta:'/api/meta-data', tiktok:'/api/tiktok-data', google:'/api/google-ads-data' };
+const ENDPOINTS = { meta:'/api/meta-data', google:'/api/google-ads-data' };
+// Google Sheets "Dash | KPI's Ánima & Artz" (compartido como lector con enlace).
+// TikTok sale de una pestaña por plaza; los seguimientos de IG de su propia pestaña.
+const SHEET_ID = '1-DSHYTCH7ayjKJml1f4No_QqPDTQdjt0FTL8PXRQgxE';
+const TIKTOK_TABS = { artz:'Query_Tik Tok ARTZ', anima:'Query_TikTok ANIMA', antara:'Query_TikTok Antara' };
+const FOLLOW_TAB = 'Seguidores IG';
+const PLAT_NOMBRE = { meta:'Meta Ads', tiktok:'TikTok Ads', google:'Google Ads' };
 
 /* =========================================================================
    FECHAS (siempre en hora local; nunca new Date('AAAA-MM-DD'))
@@ -246,7 +255,7 @@ function fmtFechaCorta(s){ const d=parseLocal(s); return `${d.getDate()} ${MES_N
    ========================================================================= */
 const hoy = new Date();
 const state = {
-  centro:'artz', plat:'meta', objetivo:'all', topBy:'visitas_perfil', search:'', sort:{}, showAll:{},
+  centro:'artz', plat:'general', objetivo:'all', topBy:'visitas_perfil', search:'', sort:{}, showAll:{},
   periodo:{ tipo:'mes', anio:hoy.getFullYear(), mes:hoy.getMonth() },
   custom:{ since: ymd(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), until: todayStr() },
 };
@@ -346,12 +355,93 @@ function aggregate(rows, idFields, sumFields){
   }
   return [...m.values()];
 }
-function sum(rows, keys){ const o={}; keys.forEach(k=>o[k]=0); rows.forEach(r=>keys.forEach(k=>o[k]+=r[k]||0)); return o; }
+function sum(rows, keys){ const o={}; keys.forEach(k=>o[k]=0); const seen={}; rows.forEach(r=>keys.forEach(k=>{ if(r[k]!=null) seen[k]=1; o[k]+=r[k]||0; })); if(rows.length && keys.includes('seguidores') && !seen.seguidores) o.seguidores=null; return o; }
 function groupBy(rows, keyFn){ const m=new Map(); rows.forEach(r=>{ const k=keyFn(r); if(!m.has(k)) m.set(k,[]); m.get(k).push(r); }); return m; }
 
 /* =========================================================================
    CARGA POR RANGO (con caché)
    ========================================================================= */
+/* ===== Google Sheets (gviz) ===== */
+async function fetchSheetTab(sheetName){
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(sheetName)}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  const match = text.match(/setResponse\(([\s\S]*)\);?\s*$/);
+  if(!match) throw new Error(`No se pudo leer la pestaña "${sheetName}" (¿está compartido el Sheet?)`);
+  const json = JSON.parse(match[1]);
+  if(json.status === 'error') throw new Error(`Pestaña "${sheetName}": ${(json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'error de gviz'}`);
+  const cols = json.table.cols.map(c => (c.label||'').trim());
+  return (json.table.rows||[]).map(r => { const o={}; cols.forEach((l,i)=>{ const c=r.c[i]; o[l] = c ? (c.v ?? c.f) : null; }); return o; });
+}
+// Fechas de gviz: "Date(2026,9,11)" (mes base 0), "AAAA-MM-DD" o "DD/MM/AAAA".
+function sheetDate(v){
+  if(v==null || v==='') return null;
+  const s=String(v).trim(); let m;
+  if((m=s.match(/^Date\((\d+),(\d+),(\d+)/))) return `${m[1]}-${pad(+m[2]+1)}-${pad(+m[3])}`;
+  if((m=s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return `${m[1]}-${m[2]}-${m[3]}`;
+  if((m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/))) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
+  return null;
+}
+const nnum = v => { const n = typeof v==='number' ? v : parseFloat(String(v??'').replace(/[$,\s]/g,'')); return isFinite(n) ? n : 0; };
+const adKey = v => String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+function centroDeTexto(v){ const k=adKey(v); return k.includes('ARTZ')?'artz':k.includes('ANIMA')?'anima':k.includes('ANTARA')?'antara':null; }
+
+let SHEET = { tiktok:null, seguidores:null, errTikTok:null, errSeg:null };
+async function loadSheet(){
+  const [tt, seg] = await Promise.all([
+    Promise.all(Object.entries(TIKTOK_TABS).map(async ([centro, tab]) => (await fetchSheetTab(tab)).map(r => {
+      const fecha = sheetDate(r['Date']); const mes = Math.round(nnum(r['Month']));
+      return { centro, cuenta:CENTROS[centro].nombre, fecha, anio: fecha ? +fecha.slice(0,4) : null, mesNum: mes,
+        campana:r['Campaign name']||'—', grupo:r['Ad group name']||'—', anuncio:r['Ad name']||'—',
+        gasto:nnum(r['Cost']), alcance:nnum(r['Reach']), impresiones:nnum(r['Impressions']), clics:nnum(r['Clicks']),
+        vv:nnum(r['Video views']), vv50:nnum(r['Video views at 50%']), vv100:nnum(r['Video views at 100%']) };
+    }).filter(r => r.mesNum>=1 && r.mesNum<=12 && (r.gasto||r.impresiones)))).then(a=>a.flat()).catch(e=>{ SHEET.errTikTok=e.message; return null; }),
+    fetchSheetTab(FOLLOW_TAB).then(rows => rows.map(r => ({
+      mesNum: Math.round(nnum(r['Mes'])), centro: centroDeTexto(r['Plaza']), key: adKey(r['Anuncio']), anuncio: r['Anuncio'],
+      valor: (r['Seguimientos IG']==null || r['Seguimientos IG']==='') ? null : nnum(r['Seguimientos IG']),
+    })).filter(r => r.centro && r.mesNum>=1 && r.mesNum<=12)).catch(e=>{ SHEET.errSeg=e.message; return null; }),
+  ]);
+  SHEET.tiktok = tt; SHEET.seguidores = seg;
+}
+// Meses (AAAA-MM) que toca el periodo elegido.
+function mesesDelPeriodo(){
+  if(state.periodo.tipo==='mes') return [{ anio:state.periodo.anio, mes:state.periodo.mes+1 }];
+  const r = resolveRange(); const out=[]; const d=parseLocal(r.since); d.setDate(1); const e=parseLocal(r.until);
+  while(d<=e){ out.push({ anio:d.getFullYear(), mes:d.getMonth()+1 }); d.setMonth(d.getMonth()+1); }
+  return out;
+}
+function tiktokFromSheet(range){
+  let rows;
+  if(state.periodo.tipo==='mes'){
+    // Mes elegido = columna "Month" de la pestaña (10 = octubre…), del año elegido.
+    rows = SHEET.tiktok.filter(r => r.mesNum===state.periodo.mes+1 && (r.anio==null || r.anio===state.periodo.anio));
+  } else {
+    rows = SHEET.tiktok.filter(r => r.fecha && r.fecha>=range.since && r.fecha<=range.until);
+  }
+  return { rows: aggregate(rows, ID_FIELDS.tiktok, SUM_FIELDS.tiktok), daily: aggregate(rows.filter(r=>r.fecha), ['fecha','centro'], ['gasto','impresiones']) };
+}
+// Reparte los seguimientos del Sheet entre las filas de Meta con el mismo nombre de anuncio.
+function applySeguidores(meta){
+  const meses = new Set(mesesDelPeriodo().map(m=>m.mes));
+  const segRows = SHEET.seguidores.filter(r => meses.has(r.mesNum));
+  const totals = {}; const byAd = new Map();
+  segRows.forEach(r => {
+    if(r.valor==null) return;
+    totals[r.centro] = (totals[r.centro]||0) + r.valor;
+    const k = r.centro+'|'+r.key; byAd.set(k, (byAd.get(k)||0) + r.valor);
+  });
+  const rows = meta.rows.map(r => ({ ...r, seguidores:null }));
+  const groups = groupBy(rows, r => r.centro+'|'+adKey(r.anuncio));
+  let matched = 0;
+  groups.forEach((rs, k) => {
+    if(!byAd.has(k)) return;
+    const val = byAd.get(k); matched++;
+    const base = rs.reduce((a,r)=>a+(r.visitas_perfil||r.gasto||0),0) || rs.length;
+    rs.forEach(r => { r.seguidores = val * ((r.visitas_perfil||r.gasto||0) || (base===rs.length?1:0)) / base; });
+  });
+  return { ...meta, rows, segTotals: totals, segMatched: matched, segSheetAds: byAd.size };
+}
+
 let DATA = { meta:{rows:[],daily:[]}, tiktok:{rows:[],daily:[]}, google:{rows:[],daily:[]} };
 let SOURCE_STATUS = { meta:'demo', tiktok:'demo', google:'demo' };
 let SOURCE_ERR = {};
@@ -367,7 +457,7 @@ function demoFor(plat, range){
   };
 }
 async function loadRange(range){
-  const key = range.since+'|'+range.until;
+  const key = range.since+'|'+range.until+'|'+state.periodo.tipo;
   if(CACHE.has(key)){ const c=CACHE.get(key); DATA=c.data; SOURCE_STATUS=c.status; SOURCE_ERR=c.err; return; }
   const data={}, status={}, errs={};
   await Promise.all(Object.entries(ENDPOINTS).map(async ([plat,url])=>{
@@ -387,6 +477,11 @@ async function loadRange(range){
       errs[plat] = err.message;
     }
   }));
+  // TikTok: Google Sheets (una pestaña por plaza).
+  if(SHEET.tiktok){ data.tiktok = tiktokFromSheet(range); status.tiktok = 'sheet'; }
+  else { data.tiktok = demoFor('tiktok', range); status.tiktok = SHEET.errTikTok ? 'error' : 'demo'; errs.tiktok = SHEET.errTikTok; }
+  // Seguimientos de Instagram: pestaña "Seguidores IG".
+  if(SHEET.seguidores) data.meta = applySeguidores(data.meta);
   DATA=data; SOURCE_STATUS=status; SOURCE_ERR=errs;
   // Objetivos: los cuatro base y cualquier otro que venga en los datos reales.
   [...new Set(DATA.meta.rows.map(r=>r.objetivo))].forEach(o=>{ if(o && !OBJETIVOS_META.includes(o)) OBJETIVOS_META.push(o); });
@@ -415,20 +510,22 @@ function mediaHTML(src, name, cls){
 }
 
 /* ===== Métricas por plataforma ===== */
-function metaDerive(o){ return { ...o, frecuencia:div(o.impresiones,o.alcance), cpm:div(o.gasto,o.impresiones)*1000, conv:div(o.seguidores,o.visitas_perfil) }; }
+function metaDerive(o){ return { ...o, frecuencia:div(o.impresiones,o.alcance), cpm:div(o.gasto,o.impresiones)*1000, conv: o.seguidores==null ? null : div(o.seguidores,o.visitas_perfil) }; }
+const fIntDash = v => v==null ? '—' : fInt(v);
+const fPctDash = v => v==null ? '—' : fPct(v);
 const META_COLS = [
   {k:'gasto',l:'Gasto',f:fMXN2},{k:'alcance',l:'Alcance',f:fInt},{k:'impresiones',l:'Impresiones',f:fInt},
   {k:'frecuencia',l:'Frecuencia',f:fDec},{k:'cpm',l:'CPM',f:fMXN2},{k:'visitas_perfil',l:'Visitas al perfil',f:fInt},
-  {k:'seguidores',l:'Seguidores IG',f:fInt},{k:'conv',l:'Conv. visita → seguidor',f:fPct},
+  {k:'seguidores',l:'Seguidores IG',f:fIntDash},{k:'conv',l:'Conv. visita → seguidor',f:fPctDash},
 ];
 function ttDerive(o){ return { ...o, cpm:div(o.gasto,o.impresiones)*1000 }; }
 const TT_COLS = [
-  {k:'alcance',l:'Alcance',f:fInt},{k:'impresiones',l:'Impresiones',f:fInt},{k:'clics',l:'Clics',f:fInt},
+  {k:'gasto',l:'Gasto',f:fMXN2},{k:'alcance',l:'Alcance',f:fInt},{k:'impresiones',l:'Impresiones',f:fInt},{k:'clics',l:'Clics',f:fInt},
   {k:'vv',l:'Visualizaciones',f:fInt},{k:'vv50',l:'Visualiz. 50\u00a0%',f:fInt},{k:'vv100',l:'Visualiz. 100\u00a0%',f:fInt},{k:'cpm',l:'CPM',f:fMXN2},
 ];
-function gDerive(o){ return { ...o, ctr:div(o.clics,o.impresiones) }; }
+function gDerive(o){ return { ...o, ctr:div(o.clics,o.impresiones), cpm:div(o.gasto,o.impresiones)*1000 }; }
 const G_COLS = [
-  {k:'impresiones',l:'Impresiones',f:fInt},{k:'clics',l:'Clics',f:fInt},{k:'ctr',l:'CTR',f:fPct},
+  {k:'gasto',l:'Gasto',f:fMXN2},{k:'impresiones',l:'Impresiones',f:fInt},{k:'clics',l:'Clics',f:fInt},{k:'ctr',l:'CTR',f:fPct},
   {k:'interacciones',l:'Interacciones',f:fInt},{k:'vv25',l:'Visualiz. 25\u00a0%',f:fInt},{k:'vv100',l:'Visualiz. 100\u00a0%',f:fInt},
 ];
 
@@ -451,8 +548,9 @@ function renderShell(){
     ? `<span class="logo antara"></span><span class="antara-word">ANTARA</span>`
     : `<span class="logo ${state.centro}"></span>`;
   document.getElementById('heroSub').textContent = `${c.nombre}, ${c.sub}. Resultados de pauta en Meta, TikTok y Google Ads.`;
-  const sb = document.getElementById('sourceBadge'); const st = SOURCE_STATUS[state.plat];
-  sb.textContent = st==='live' ? '● En vivo' : st==='error' ? 'Error de conexión · datos de ejemplo' : 'Datos de ejemplo';
+  const sb = document.getElementById('sourceBadge');
+  const st = state.plat==='general' ? (Object.values(SOURCE_STATUS).some(v=>v==='live'||v==='sheet') ? 'live' : 'demo') : SOURCE_STATUS[state.plat];
+  sb.textContent = st==='live' ? '● En vivo' : st==='sheet' ? '● Google Sheets' : st==='error' ? 'Error de conexión · datos de ejemplo' : 'Datos de ejemplo';
   sb.title = st==='error' ? (SOURCE_ERR[state.plat]||'') : '';
   document.title = `${c.nombre} · Paid Media`;
   renderPeriodo();
@@ -542,6 +640,8 @@ function renderMeta(){
   if(state.objetivo!=='all' && !presentes.has(state.objetivo)) state.objetivo='all';
   const rows = base.filter(r=>state.objetivo==='all'||r.objetivo===state.objetivo);
   const t = metaDerive(sum(rows, META_SUM));
+  const segSheet = !!DATA.meta.segTotals;
+  if(segSheet && state.objetivo==='all'){ t.seguidores = DATA.meta.segTotals[state.centro] ?? null; t.conv = t.seguidores==null ? null : div(t.seguidores, t.visitas_perfil); }
   const showWeb = rows.some(r=>r.clics_enlace>0) || state.objetivo==='Tráfico a web';
 
   let h = `<div class="toolbar"><span class="lbl">Objetivo</span>
@@ -549,14 +649,14 @@ function renderMeta(){
       return `<button class="chip" data-obj="${o}" aria-pressed="${state.objetivo===o}" ${ok?'':'disabled title="Sin campañas con este objetivo en el periodo"'}>${o==='all'?'Todos':o}</button>`; }).join('')}
   </div>`;
   h += kpiStrip([
-    {l:'Gasto', v:fMXN2(t.gasto)},
+    {l:'Gasto', v:fMXN(t.gasto)},
     {l:'Alcance', v:fCompact(t.alcance)},
     {l:'Impresiones', v:fCompact(t.impresiones)},
     {l:'Frecuencia', v:fDec(t.frecuencia)},
     {l:'CPM', v:fMXN2(t.cpm)},
     {l:'Visitas al perfil', v:fCompact(t.visitas_perfil)},
-    {l:'Seguidores IG', v:fCompact(t.seguidores), n:'Atribuidos a anuncios'},
-    {l:'Conv. visita → seguidor', v:fPct(t.conv)},
+    {l:'Seguidores IG', v:t.seguidores==null?'—':fInt(t.seguidores), n: segSheet ? (state.periodo.tipo==='mes' ? 'Google Sheets' : 'Google Sheets · por mes completo') : 'Atribuidos a anuncios'},
+    {l:'Conv. visita → seguidor', v:fPctDash(t.conv)},
     ...(showWeb?[{l:'Clics al sitio web', v:fCompact(t.clics_enlace)}]:[])
   ]);
   h += `<div class="section grid-2">
@@ -569,7 +669,7 @@ function renderMeta(){
   const by = state.topBy; const asc = by==='cpm';
   const top = [...adAgg].filter(a=>(by!=='conv'||a.visitas_perfil>50) && (by!=='cpm'||a.impresiones>0)).sort((a,b)=>asc?a[by]-b[by]:b[by]-a[by]).slice(0,5);
   const maxV = Math.max(...top.map(a=>a[by]))||1;
-  const fmtBy = {visitas_perfil:fInt,seguidores:fInt,alcance:fInt,impresiones:fInt,cpm:fMXN2,conv:fPct}[by];
+  const fmtBy = {visitas_perfil:fInt,seguidores:fIntDash,alcance:fInt,impresiones:fInt,cpm:fMXN2,conv:fPct}[by];
   h += `<div class="section"><div class="top-head"><div><h2 class="section-title">Top anuncios</h2><p class="section-desc" style="margin:0">Los cinco conceptos con mejor resultado en el periodo y objetivo elegidos.</p></div>
     <label><span style="font-size:.85rem;color:var(--muted);margin-right:.5rem">Ordenar por</span><select id="topBy">${topOpts.map(([k,l])=>`<option value="${k}" ${k===by?'selected':''}>${l}</option>`).join('')}</select></label></div>
     <div class="top-list">${top.map((a,i)=>`<article class="top-card fade-in" style="animation-delay:${i*40}ms">
@@ -577,7 +677,7 @@ function renderMeta(){
       <div class="top-body">
         <div class="top-name" title="${esc(a.name)}">${esc(a.name)}</div><div class="top-meta">${esc(a.objetivo)}</div>
         <div class="top-value">${fmtBy(a[by])}<small>${topOpts.find(o=>o[0]===by)[1].toLowerCase()}</small></div>
-        <dl class="top-stats"><div><dt>Gasto</dt><dd>${fMXN2(a.gasto)}</dd></div><div><dt>Alcance</dt><dd>${fInt(a.alcance)}</dd></div><div><dt>CPM</dt><dd>${fMXN2(a.cpm)}</dd></div></dl>
+        <dl class="top-stats"><div><dt>Gasto</dt><dd>${fMXN(a.gasto)}</dd></div><div><dt>Alcance</dt><dd>${fCompact(a.alcance)}</dd></div><div><dt>CPM</dt><dd>${fMXN2(a.cpm)}</dd></div></dl>
         <div class="bar"><i style="width:${asc ? (Math.min(...top.map(x=>x.cpm))/a.cpm*100) : (a[by]/maxV*100)}%"></i></div>
       </div>
     </article>`).join('') || '<div class="empty">Sin anuncios en este periodo.</div>'}</div></div>`;
@@ -609,7 +709,7 @@ function renderTikTok(){
   const rows = rowsFor('tiktok');
   const t = ttDerive(sum(rows, TT_SUM));
   let h = kpiStrip([
-    {l:'Alcance', v:fCompact(t.alcance)},{l:'Impresiones', v:fCompact(t.impresiones)},{l:'Clics', v:fCompact(t.clics)},
+    {l:'Gasto', v:fMXN(t.gasto)},{l:'Alcance', v:fCompact(t.alcance)},{l:'Impresiones', v:fCompact(t.impresiones)},{l:'Clics', v:fCompact(t.clics)},
     {l:'Visualizaciones', v:fCompact(t.vv)},{l:'Visualiz. al 50\u00a0%', v:fCompact(t.vv50), n:fPct(div(t.vv50,t.vv))+' de las vistas'},
     {l:'Visualiz. al 100\u00a0%', v:fCompact(t.vv100), n:fPct(div(t.vv100,t.vv))+' de las vistas'},{l:'CPM', v:fMXN2(t.cpm)}
   ]);
@@ -637,7 +737,7 @@ function renderGoogle(){
   const rows = rowsFor('google');
   const t = gDerive(sum(rows, G_SUM));
   let h = kpiStrip([
-    {l:'Impresiones', v:fCompact(t.impresiones)},{l:'Clics', v:fCompact(t.clics)},{l:'CTR', v:fPct(t.ctr)},
+    {l:'Gasto', v:fMXN(t.gasto)},{l:'Impresiones', v:fCompact(t.impresiones)},{l:'Clics', v:fCompact(t.clics)},{l:'CTR', v:fPct(t.ctr)},
     {l:'Interacciones', v:fCompact(t.interacciones)},{l:'Visualiz. al 25\u00a0%', v:fCompact(t.vv25)},
     {l:'Visualiz. al 100\u00a0%', v:fCompact(t.vv100), n:fPct(div(t.vv100,t.vv25))+' de las que llegan al 25\u00a0%'}
   ]);
@@ -663,14 +763,90 @@ function renderGoogle(){
       scales:{ x:{grid:{display:false}}, y:{beginAtZero:true, ticks:{callback:v=>fCompact(v)}} } } }));
 }
 
+// Achica el número de un KPI hasta que quepa en su celda (nunca se encima con el de al lado).
+function fitKpis(){
+  view.querySelectorAll('.kpi-value').forEach(el=>{
+    el.style.fontSize='';
+    let size = parseFloat(getComputedStyle(el).fontSize), guard=0;
+    while(el.scrollWidth > el.clientWidth && size > 14 && guard++ < 40){ size -= 1; el.style.fontSize = size+'px'; }
+  });
+}
 function render(){
   killCharts(); renderShell();
-  if(state.plat==='meta') renderMeta(); else if(state.plat==='tiktok') renderTikTok(); else renderGoogle();
+  if(state.plat==='general') renderGeneral(); else if(state.plat==='meta') renderMeta(); else if(state.plat==='tiktok') renderTikTok(); else renderGoogle();
+  requestAnimationFrame(fitKpis);
+}
+window.addEventListener('resize', ()=>fitKpis());
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(()=>fitKpis());
+
+/* ----- GENERAL (Meta + TikTok + Google Ads) ----- */
+function renderGeneral(){
+  const plats = ['meta','tiktok','google'];
+  const per = plats.map(p=>{
+    const rows = rowsFor(p);
+    const o = sum(rows, ['gasto','impresiones','alcance','clics','clics_enlace']);
+    const clics = p==='meta' ? o.clics_enlace : o.clics;
+    const st = SOURCE_STATUS[p]; const ok = st==='live' || st==='sheet';
+    return { p, ok, st, gasto:o.gasto, impresiones:o.impresiones, alcance: p==='google' ? null : o.alcance, clics,
+             cpm:div(o.gasto,o.impresiones)*1000, ctr:div(clics,o.impresiones) };
+  });
+  const inc = per.filter(x=>x.ok);
+  const T = { gasto:0, impresiones:0, alcance:0, clics:0 };
+  inc.forEach(x=>{ T.gasto+=x.gasto; T.impresiones+=x.impresiones; T.alcance+=x.alcance||0; T.clics+=x.clics; });
+  T.cpm = div(T.gasto,T.impresiones)*1000; T.ctr = div(T.clics,T.impresiones);
+  const fuera = per.filter(x=>!x.ok).map(x=>PLAT_NOMBRE[x.p]);
+
+  let h = kpiStrip([
+    {l:'Gasto total', v:fMXN(T.gasto), n: inc.map(x=>PLAT_NOMBRE[x.p].replace(' Ads','')).join(' + ') || 'Sin plataformas conectadas'},
+    {l:'Impresiones', v:fCompact(T.impresiones)},
+    {l:'Alcance', v:fCompact(T.alcance), n:'Meta + TikTok'},
+    {l:'Clics', v:fCompact(T.clics)},
+    {l:'CPM', v:fMXN2(T.cpm)},
+    {l:'CTR', v:fPct(T.ctr)},
+  ]);
+  if(fuera.length) h += `<p class="note" style="margin:-1.5rem 0 2rem">${fuera.join(' y ')} todavía no ${fuera.length>1?'están conectados':'está conectado'}: no ${fuera.length>1?'se suman':'se suma'} al total general.</p>`;
+  h += `<div class="section grid-2">
+    <div><h2 class="section-title" id="g1t">Gasto por día y plataforma</h2><p class="section-desc">Suma de las plataformas conectadas.</p><div class="panel"><div class="chart-box"><canvas id="c1"></canvas></div></div></div>
+    <div><h2 class="section-title">Reparto del gasto</h2><p class="section-desc">Cuánto de la inversión va a cada plataforma.</p><div class="panel"><div class="chart-box"><canvas id="c2"></canvas></div></div></div>
+  </div>`;
+  const GEN_COLS = [
+    {k:'gasto',l:'Gasto',f:fMXN2},{k:'share',l:'% del gasto',f:fPct},{k:'impresiones',l:'Impresiones',f:fInt},
+    {k:'alcance',l:'Alcance',f:fIntDash},{k:'clics',l:'Clics',f:fInt},{k:'cpm',l:'CPM',f:fMXN2},{k:'ctr',l:'CTR',f:fPct},
+  ];
+  const tRows = per.map(x=> x.ok
+    ? { ...x, name:PLAT_NOMBRE[x.p], sub: x.st==='sheet'?'Google Sheets':'En vivo', share: div(x.gasto,T.gasto) }
+    : { p:x.p, name:PLAT_NOMBRE[x.p], sub:'Sin conectar · no suma al total', gasto:null, share:null, impresiones:null, alcance:null, clics:null, cpm:null, ctr:null });
+  const tot = { ...T, share: inc.length?1:0 };
+  h += `<div class="section"><h2 class="section-title">Resultados por plataforma</h2><p class="section-desc">${CENTROS[state.centro].nombre}, en el periodo elegido.</p>
+    ${tableHTML('gen', 'Plataforma', tRows, GEN_COLS.map(c=>({ ...c, f: v => v==null ? '—' : c.f(v) })), tot)}
+    <p class="note">Meta cuenta como clics los clics en enlaces. Google Ads no reporta alcance, por eso el alcance general es Meta + TikTok, y se suma entre plataformas y anuncios (puede repetir personas).</p></div>`;
+  view.innerHTML = h; bindSort(); chartDefaults();
+
+  // Gasto diario apilado por plataforma
+  const r = resolveRange(); const days = eachDay(r.since, r.until); const byMonth = days.length > 62;
+  const keyOf = f => byMonth ? f.slice(0,7) : f; const keys = [...new Set(days.map(keyOf))];
+  const colors = { meta:css('--c1'), tiktok:css('--c2'), google:css('--c4') };
+  const datasets = inc.map(x=>{
+    const acc = new Map(keys.map(k=>[k,0]));
+    dailyFor(x.p).forEach(d=>{ const k=keyOf(d.fecha); if(acc.has(k)) acc.set(k, acc.get(k)+(d.gasto||0)); });
+    return { label:PLAT_NOMBRE[x.p], data:keys.map(k=>acc.get(k)), backgroundColor:colors[x.p], borderRadius:2, stack:'g' };
+  });
+  if(byMonth) document.getElementById('g1t').textContent = 'Gasto por mes y plataforma';
+  charts.push(new Chart(document.getElementById('c1'), { type:'bar', data:{ labels: keys.map(k=> byMonth ? MES_NOMBRES[+k.slice(5,7)-1].slice(0,3)+' '+k.slice(0,4) : fmtFechaCorta(k)), datasets },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+      plugins:{ legend:{position:'bottom',labels:{boxWidth:10}}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+fMXN(c.raw)}} },
+      scales:{ x:{stacked:true, grid:{display:false}, ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:12}}, y:{stacked:true, beginAtZero:true, ticks:{callback:v=>fCompactMXN(v)}} } } }));
+  charts.push(new Chart(document.getElementById('c2'), { type:'bar', data:{ labels: inc.map(x=>PLAT_NOMBRE[x.p]), datasets:[{ label:'Gasto', data: inc.map(x=>x.gasto), backgroundColor: inc.map(x=>colors[x.p]), borderRadius:2 }] },
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>fMXN(c.raw)+' · '+fPct(div(c.raw,T.gasto))}} },
+      scales:{ x:{beginAtZero:true, ticks:{maxRotation:0, maxTicksLimit:6, callback:v=>fCompactMXN(v)}}, y:{grid:{display:false}} } } }));
 }
 let loadSeq = 0;
+let sheetLoaded = null;
 async function refresh(){
   const seq = ++loadSeq;
   view.classList.add('loading'); renderPeriodo();
+  if(!sheetLoaded){ sheetLoaded = loadSheet(); }
+  await sheetLoaded;
   await loadRange(resolveRange());
   if(seq !== loadSeq) return;           // llegó otra selección mientras cargaba
   view.classList.remove('loading');
