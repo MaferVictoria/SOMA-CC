@@ -35,6 +35,11 @@ const CENTROS = [
   { id: 'anima',  match: /ANIMA/ },
   { id: 'antara', match: /ANTARA/ },
 ];
+// Campañas que no llevan el nombre de la plaza pero pertenecen a una.
+// Se revisan solo si el nombre no trae ARTZ, ANIMA ni ANTARA.
+const CENTRO_EXCEPCIONES = [
+  { id: 'artz', match: /CAMPANA INSTITUCIONAL/ },
+];
 // "WEB" va antes que "PAGINA" para que "página web" cuente como web.
 const OBJETIVO_POR_NOMBRE = [
   { obj: 'Tráfico a web',    match: /\bWEB\b|SITIO|LANDING|WEBSITE/ },
@@ -47,6 +52,11 @@ const OBJETIVO_POR_API = { OUTCOME_AWARENESS: 'Alcance', OUTCOME_ENGAGEMENT: 'In
 const AD_FIELDS = ['campaign_name', 'adset_name', 'ad_name', 'ad_id', 'objective',
   'spend', 'reach', 'impressions', 'inline_link_clicks', 'actions'];
 const PROFILE_FIELD = 'instagram_profile_visits';
+// "Seguimientos de Instagram" de Ads Manager. Meta no documenta aún el nombre
+// del campo en la API, así que se prueban estos nombres y se usa el primero
+// que la API acepte. Si ninguno existe, se buscan acciones tipo "follow".
+const FOLLOW_CANDIDATES = ['instagram_follows', 'instagram_profile_follows', 'ig_follows', 'instagram_follow'];
+let followFieldCache; // undefined = sin probar, null = ninguno funciona
 const DAILY_FIELDS = ['campaign_name', 'objective', 'spend', 'impressions'];
 
 const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
@@ -60,7 +70,7 @@ const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 
 function centroDe(campaignName) {
   const n = norm(campaignName);
-  const c = CENTROS.find(x => x.match.test(n));
+  const c = CENTROS.find(x => x.match.test(n)) || CENTRO_EXCEPCIONES.find(x => x.match.test(n));
   return c ? c.id : null;
 }
 function objetivoDe(campaignName, adsetName, apiObjective) {
@@ -105,6 +115,62 @@ async function fetchAll(token, accountId, { level, fields, since, until, increme
   return out;
 }
 
+async function graphGet(token, path, params) {
+  const qs = new URLSearchParams({ ...params, access_token: token });
+  const res = await fetch(`https://graph.facebook.com/${API_VERSION}/${path}?${qs}`);
+  const json = await res.json();
+  if (!res.ok || json.error) {
+    const err = new Error((json.error && json.error.message) || `HTTP ${res.status}`);
+    err.meta = json.error;
+    throw err;
+  }
+  return json;
+}
+
+// Encuentra qué campo de "seguimientos de Instagram" acepta la API.
+async function detectFollowField(token, accountId, since, until) {
+  if (followFieldCache !== undefined) return followFieldCache;
+  const tried = [];
+  for (const f of FOLLOW_CANDIDATES) {
+    try {
+      await graphGet(token, `${accountId}/insights`, {
+        level: 'account', fields: f, time_range: JSON.stringify({ since, until }), limit: '1',
+      });
+      followFieldCache = f;
+      return f;
+    } catch (e) { tried.push(f); }
+  }
+  followFieldCache = null;
+  return null;
+}
+
+// Imagen de cada anuncio: anuncio → creativo → image_url o miniatura grande.
+async function fetchImages(token, adIds) {
+  const out = {};
+  const errors = [];
+  const chunk = (arr, n) => arr.reduce((a, x, i) => (i % n ? a[a.length - 1].push(x) : a.push([x]), a), []);
+  const creativeOf = {};
+  for (const ids of chunk(adIds, 50)) {
+    try {
+      const j = await graphGet(token, '', { ids: ids.join(','), fields: 'creative{id}' });
+      Object.entries(j).forEach(([adId, v]) => { if (v && v.creative) creativeOf[adId] = v.creative.id; });
+    } catch (e) { errors.push(e.message); }
+  }
+  const creativeIds = [...new Set(Object.values(creativeOf))];
+  const imgOf = {};
+  for (const ids of chunk(creativeIds, 50)) {
+    try {
+      const j = await graphGet(token, '', {
+        ids: ids.join(','), fields: 'image_url,thumbnail_url',
+        thumbnail_width: '600', thumbnail_height: '600',
+      });
+      Object.entries(j).forEach(([cid, v]) => { imgOf[cid] = (v && (v.image_url || v.thumbnail_url)) || null; });
+    } catch (e) { errors.push(e.message); }
+  }
+  adIds.forEach(id => { out[id] = imgOf[creativeOf[id]] || null; });
+  return { images: out, errors };
+}
+
 module.exports = async function handler(req, res) {
   const token = process.env.META_ACCESS_TOKEN;
   let accountId = (process.env.META_AD_ACCOUNT_ID || '').trim();
@@ -120,16 +186,18 @@ module.exports = async function handler(req, res) {
   let since = isDate(q.since) ? q.since : today.slice(0, 8) + '01';
   if (since > until) since = until;
 
-  let adRaw, dailyRaw, profileFieldOk = true;
+  let adRaw, dailyRaw, profileFieldOk = true, followField = null;
   try {
+    followField = await detectFollowField(token, accountId, since, until);
+    const adFields = [...AD_FIELDS, ...(followField ? [followField] : [])];
     const dailyPromise = fetchAll(token, accountId, { level: 'campaign', fields: DAILY_FIELDS, since, until, increment: '1' });
     try {
-      adRaw = await fetchAll(token, accountId, { level: 'ad', fields: [...AD_FIELDS, PROFILE_FIELD], since, until, increment: 'all_days' });
+      adRaw = await fetchAll(token, accountId, { level: 'ad', fields: [...adFields, PROFILE_FIELD], since, until, increment: 'all_days' });
     } catch (err) {
       // Si la versión de la API no reconoce el campo, reintenta y lo toma de "actions".
       if (/instagram_profile_visits/i.test(err.message)) {
         profileFieldOk = false;
-        adRaw = await fetchAll(token, accountId, { level: 'ad', fields: AD_FIELDS, since, until, increment: 'all_days' });
+        adRaw = await fetchAll(token, accountId, { level: 'ad', fields: adFields, since, until, increment: 'all_days' });
       } else throw err;
     }
     dailyRaw = await dailyPromise;
@@ -157,10 +225,21 @@ module.exports = async function handler(req, res) {
       visitas_perfil: profileFieldOk && r[PROFILE_FIELD] != null
         ? num(r[PROFILE_FIELD])
         : maxAction(r.actions, t => /profile_visit/i.test(t)),
-      seguidores: maxAction(r.actions, t => /follow/i.test(t) && !/unfollow/i.test(t)),
+      seguidores: followField && r[followField] != null
+        ? num(r[followField])
+        : maxAction(r.actions, t => /follow/i.test(t) && !/unfollow/i.test(t)),
       clics_enlace: num(r.inline_link_clicks),
     });
   }
+  // Imágenes de los anuncios (si falla, el dashboard sigue sin imágenes).
+  let imgErrors = [];
+  try {
+    const ids = [...new Set(rows.map(r => r.ad_id).filter(Boolean))];
+    const { images, errors } = await fetchImages(token, ids);
+    imgErrors = errors;
+    rows.forEach(r => { r.imagen = images[r.ad_id] || null; });
+  } catch (e) { imgErrors.push(e.message); }
+
   const daily = [];
   for (const r of dailyRaw) {
     const centro = centroDe(r.campaign_name);
@@ -183,6 +262,10 @@ module.exports = async function handler(req, res) {
       gasto_total_dashboard: Math.round(rows.reduce((a, r) => a + r.gasto, 0) * 100) / 100,
       gasto_por_plaza: rows.reduce((a, r) => { a[r.centro] = Math.round(((a[r.centro] || 0) + r.gasto) * 100) / 100; return a; }, {}),
       campo_visitas_perfil: profileFieldOk ? PROFILE_FIELD : 'tomado de actions',
+      campo_seguidores: followField || 'ninguno de: ' + FOLLOW_CANDIDATES.join(', '),
+      seguidores_total: rows.reduce((a, r) => a + r.seguidores, 0),
+      anuncios_con_imagen: rows.filter(r => r.imagen).length + ' de ' + rows.length,
+      errores_imagenes: imgErrors.slice(0, 3),
       tipos_de_accion: [...actionTypes].sort(),
       campanas_sin_plaza: [...unmatched].sort(),
       campanas_detectadas: [...new Set(rows.map(r => `${r.campana}  →  ${r.centro}, ${r.objetivo}`))].sort(),

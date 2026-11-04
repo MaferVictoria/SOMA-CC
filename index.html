@@ -123,17 +123,28 @@ body[data-centro="artz"] .panel{ border-radius:2px; }
 /* ===== Top anuncios ===== */
 .top-head{ display:flex; justify-content:space-between; align-items:end; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
 select{ background:var(--surface); border:1px solid var(--line); padding:.45rem .8rem; border-radius:6px; font-size:.85rem; cursor:pointer; }
-.top-list{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:1rem; }
-.top-card{ background:var(--surface); border:1px solid var(--line); padding:1rem 1.1rem 1.1rem; position:relative; }
+.top-list{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:1rem; }
+.top-card{ background:var(--surface); border:1px solid var(--line); display:flex; flex-direction:column; overflow:hidden; }
 body[data-centro="antara"] .top-card{ border-radius:18px; }
-.top-rank{ font-family:var(--display); font-size:2.6rem; line-height:1; color:var(--c2); }
-.top-name{ font-weight:700; margin-top:.5rem; font-size:.95rem; line-height:1.3; }
-.top-meta{ color:var(--muted); font-size:.78rem; margin-top:.2rem; }
-.top-value{ font-family:var(--display); font-size:1.5rem; margin-top:.75rem; }
+.top-media{ position:relative; aspect-ratio:4/5; background:var(--accent-soft); overflow:hidden; }
+.top-media a{ display:block; height:100%; }
+.top-img{ display:block; width:100%; height:100%; object-fit:cover; transition:transform .35s ease; }
+.top-media a:hover .top-img{ transform:scale(1.03); }
+.top-img.ph, .thumb.ph{ display:grid; place-items:center; color:var(--muted); font-family:var(--display); font-size:2.4rem; letter-spacing:.05em; background:var(--accent-soft); }
+.top-rank{ position:absolute; top:.65rem; left:.65rem; min-width:2.2rem; height:2.2rem; padding:0 .5rem; display:grid; place-items:center; background:var(--surface); color:var(--ink); font-family:var(--display); font-size:1.2rem; border-radius:999px; box-shadow:0 1px 4px rgba(0,0,0,.15); }
+.top-body{ padding:.9rem 1rem 1rem; display:flex; flex-direction:column; flex:1; }
+.top-name{ font-weight:700; font-size:.78rem; line-height:1.35; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.top-meta{ color:var(--muted); font-size:.76rem; margin-top:.25rem; }
+.top-value{ font-family:var(--display); font-size:1.5rem; margin-top:.6rem; }
 .top-value small{ font-family:var(--body); font-size:.75rem; color:var(--muted); margin-left:.3rem; }
-.top-mini{ display:flex; gap:1rem; margin-top:.4rem; font-size:.78rem; color:var(--muted); flex-wrap:wrap; }
-.bar{ height:3px; background:var(--accent-soft); margin-top:.8rem; }
+.top-stats{ display:grid; grid-template-columns:repeat(3,auto); justify-content:space-between; gap:.5rem; margin:.55rem 0 .9rem; }
+.top-stats dt{ font-size:.68rem; color:var(--muted); }
+.top-stats dd{ font-size:.8rem; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.bar{ height:3px; background:var(--accent-soft); margin-top:auto; }
 .bar > i{ display:block; height:100%; background:var(--accent); }
+.cell-name{ display:flex; align-items:center; gap:.7rem; }
+.cell-name .nm{ display:block; overflow-wrap:anywhere; }
+.thumb{ flex-shrink:0; width:48px; height:48px; object-fit:cover; border-radius:4px; display:block; font-size:.9rem !important; }
 
 /* ===== Tablas ===== */
 .table-wrap{ overflow-x:auto; background:var(--surface); border:1px solid var(--line); }
@@ -143,7 +154,7 @@ th{ text-align:right; font-size:.78rem; font-weight:600; color:var(--muted); pad
 th:first-child, td:first-child{ text-align:left; }
 th[data-dir="asc"]::after{ content:" ↑"; } th[data-dir="desc"]::after{ content:" ↓"; }
 td{ text-align:right; padding:.7rem .9rem; border-bottom:1px solid var(--line); font-size:.86rem; white-space:nowrap; }
-td:first-child{ white-space:normal; min-width:220px; }
+td:first-child{ white-space:normal; min-width:280px; max-width:420px; }
 td .sub{ display:block; font-size:.75rem; color:var(--muted); }
 tr.total td{ font-weight:700; border-top:1px solid var(--ink); border-bottom:none; }
 tbody tr:hover td{ background:var(--accent-soft); }
@@ -394,11 +405,19 @@ const fDec = v => (isFinite(v)?v:0).toFixed(2);
 function fCompact(v){ v=v||0; if(Math.abs(v)>=1e6) return (v/1e6).toFixed(2)+'\u00a0M'; if(Math.abs(v)>=1e4) return (v/1e3).toFixed(1)+'\u00a0k'; return fInt(v); }
 const fCompactMXN = v => '$'+fCompact(v);
 const div = (a,b) => b ? a/b : 0;
+const esc = v => String(v==null?'':v).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Miniatura del anuncio (o un recuadro con iniciales si no hay imagen).
+function mediaHTML(src, name, cls){
+  const ini = esc(String(name||'').replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ ]/g,' ').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase() || '·');
+  return src
+    ? `<img class="${cls}" src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML='<span class=&quot;${cls} ph&quot;>${ini}</span>'">`
+    : `<span class="${cls} ph">${ini}</span>`;
+}
 
 /* ===== Métricas por plataforma ===== */
 function metaDerive(o){ return { ...o, frecuencia:div(o.impresiones,o.alcance), cpm:div(o.gasto,o.impresiones)*1000, conv:div(o.seguidores,o.visitas_perfil) }; }
 const META_COLS = [
-  {k:'gasto',l:'Gasto',f:fMXN},{k:'alcance',l:'Alcance',f:fInt},{k:'impresiones',l:'Impresiones',f:fInt},
+  {k:'gasto',l:'Gasto',f:fMXN2},{k:'alcance',l:'Alcance',f:fInt},{k:'impresiones',l:'Impresiones',f:fInt},
   {k:'frecuencia',l:'Frecuencia',f:fDec},{k:'cpm',l:'CPM',f:fMXN2},{k:'visitas_perfil',l:'Visitas al perfil',f:fInt},
   {k:'seguidores',l:'Seguidores IG',f:fInt},{k:'conv',l:'Conv. visita → seguidor',f:fPct},
 ];
@@ -479,7 +498,7 @@ function tableHTML(id, firstLabel, rows, cols, total){
     <th data-k="name" ${s.k==='name'?`data-dir="${s.dir}"`:''}>${firstLabel}</th>
     ${cols.map(c=>`<th data-k="${c.k}" ${s.k===c.k?`data-dir="${s.dir}"`:''}>${c.l}</th>`).join('')}
   </tr></thead><tbody>
-    ${(state.showAll[id] ? sorted : sorted.slice(0,PAGE)).map(r=>`<tr><td>${r.name}${r.sub?`<span class="sub">${r.sub}</span>`:''}</td>${cols.map(c=>`<td>${c.f(r[c.k])}</td>`).join('')}</tr>`).join('')}
+    ${(state.showAll[id] ? sorted : sorted.slice(0,PAGE)).map(r=>`<tr><td><div class="cell-name">${r.thumb!==undefined ? (r.thumb ? `<a href="${esc(r.thumb)}" target="_blank" rel="noopener">${mediaHTML(r.thumb, r.name, 'thumb')}</a>` : mediaHTML(null, r.name, 'thumb')) : ''}<div><span class="nm">${esc(r.name)}</span>${r.sub?`<span class="sub">${esc(r.sub)}</span>`:''}</div></div></td>${cols.map(c=>`<td>${c.f(r[c.k])}</td>`).join('')}</tr>`).join('')}
     ${total?`<tr class="total"><td>Total</td>${cols.map(c=>`<td>${c.f(total[c.k])}</td>`).join('')}</tr>`:''}
   </tbody></table>${sorted.length>PAGE?`<button class="more" data-more="${id}">${state.showAll[id]?'Mostrar menos':`Ver las ${sorted.length} filas`}</button>`:''}</div>`;
 }
@@ -530,7 +549,7 @@ function renderMeta(){
       return `<button class="chip" data-obj="${o}" aria-pressed="${state.objetivo===o}" ${ok?'':'disabled title="Sin campañas con este objetivo en el periodo"'}>${o==='all'?'Todos':o}</button>`; }).join('')}
   </div>`;
   h += kpiStrip([
-    {l:'Gasto', v:fCompactMXN(t.gasto)},
+    {l:'Gasto', v:fMXN2(t.gasto)},
     {l:'Alcance', v:fCompact(t.alcance)},
     {l:'Impresiones', v:fCompact(t.impresiones)},
     {l:'Frecuencia', v:fDec(t.frecuencia)},
@@ -545,7 +564,7 @@ function renderMeta(){
     <div><h2 class="section-title">CPM por objetivo</h2><p class="section-desc">Cuánto cuesta cada mil impresiones según el objetivo.</p><div class="panel"><div class="chart-box"><canvas id="c2"></canvas></div></div></div>
   </div>`;
 
-  const adAgg = [...groupBy(rows, r=>r.anuncio+'||'+r.objetivo)].map(([k,rs])=>({ name:rs[0].anuncio, objetivo:rs[0].objetivo, ...metaDerive(sum(rs,META_SUM)) }));
+  const adAgg = [...groupBy(rows, r=>r.anuncio+'||'+r.objetivo)].map(([k,rs])=>({ name:rs[0].anuncio, objetivo:rs[0].objetivo, imagen:(rs.find(x=>x.imagen)||{}).imagen||null, ...metaDerive(sum(rs,META_SUM)) }));
   const topOpts = [['visitas_perfil','Visitas al perfil'],['seguidores','Seguidores IG'],['alcance','Alcance'],['impresiones','Impresiones'],['cpm','CPM más bajo'],['conv','Conversión visita → seguidor']];
   const by = state.topBy; const asc = by==='cpm';
   const top = [...adAgg].filter(a=>(by!=='conv'||a.visitas_perfil>50) && (by!=='cpm'||a.impresiones>0)).sort((a,b)=>asc?a[by]-b[by]:b[by]-a[by]).slice(0,5);
@@ -554,16 +573,19 @@ function renderMeta(){
   h += `<div class="section"><div class="top-head"><div><h2 class="section-title">Top anuncios</h2><p class="section-desc" style="margin:0">Los cinco conceptos con mejor resultado en el periodo y objetivo elegidos.</p></div>
     <label><span style="font-size:.85rem;color:var(--muted);margin-right:.5rem">Ordenar por</span><select id="topBy">${topOpts.map(([k,l])=>`<option value="${k}" ${k===by?'selected':''}>${l}</option>`).join('')}</select></label></div>
     <div class="top-list">${top.map((a,i)=>`<article class="top-card fade-in" style="animation-delay:${i*40}ms">
-      <div class="top-rank">${i+1}</div><div class="top-name">${a.name}</div><div class="top-meta">${a.objetivo}</div>
-      <div class="top-value">${fmtBy(a[by])}<small>${topOpts.find(o=>o[0]===by)[1].toLowerCase()}</small></div>
-      <div class="top-mini"><span>${fMXN(a.gasto)}</span><span>${fCompact(a.alcance)} alcance</span><span>CPM ${fMXN2(a.cpm)}</span></div>
-      <div class="bar"><i style="width:${asc ? (Math.min(...top.map(x=>x.cpm))/a.cpm*100) : (a[by]/maxV*100)}%"></i></div>
+      <div class="top-media">${a.imagen ? `<a href="${esc(a.imagen)}" target="_blank" rel="noopener" title="Ver imagen completa">${mediaHTML(a.imagen, a.name, 'top-img')}</a>` : mediaHTML(null, a.name, 'top-img')}<span class="top-rank">${i+1}</span></div>
+      <div class="top-body">
+        <div class="top-name" title="${esc(a.name)}">${esc(a.name)}</div><div class="top-meta">${esc(a.objetivo)}</div>
+        <div class="top-value">${fmtBy(a[by])}<small>${topOpts.find(o=>o[0]===by)[1].toLowerCase()}</small></div>
+        <dl class="top-stats"><div><dt>Gasto</dt><dd>${fMXN2(a.gasto)}</dd></div><div><dt>Alcance</dt><dd>${fInt(a.alcance)}</dd></div><div><dt>CPM</dt><dd>${fMXN2(a.cpm)}</dd></div></dl>
+        <div class="bar"><i style="width:${asc ? (Math.min(...top.map(x=>x.cpm))/a.cpm*100) : (a[by]/maxV*100)}%"></i></div>
+      </div>
     </article>`).join('') || '<div class="empty">Sin anuncios en este periodo.</div>'}</div></div>`;
 
   const cols = showWeb ? [...META_COLS, {k:'clics_enlace',l:'Clics al sitio',f:fInt}] : META_COLS;
   const sets = [...groupBy(rows, r=>r.campana+'||'+r.conjunto)].map(([k,rs])=>({ name:rs[0].conjunto, sub:rs[0].campana, ...metaDerive(sum(rs,META_SUM)) }));
   h += `<div class="section"><h2 class="section-title">Por conjunto de anuncios</h2><p class="section-desc">Solo lo que cada conjunto gastó dentro del periodo elegido. Toca una columna para ordenar.</p>${tableHTML('meta-sets','Conjunto de anuncios', sets, cols, t)}</div>`;
-  const ads = rows.map(r=>({ name:r.anuncio, sub:r.conjunto, ...metaDerive(r) })).filter(a=>!state.search || String(a.name).toLowerCase().includes(state.search.toLowerCase()));
+  const ads = rows.map(r=>({ name:r.anuncio, sub:r.conjunto, thumb:r.imagen||null, ...metaDerive(r) })).filter(a=>!state.search || String(a.name).toLowerCase().includes(state.search.toLowerCase()));
   h += `<div class="section"><div class="top-head"><div><h2 class="section-title">Por anuncio</h2><p class="section-desc" style="margin:0">Cada fila es un concepto de contenido dentro de su conjunto.</p></div>
     <input class="search" id="search" type="search" placeholder="Buscar concepto" value="${state.search}"></div>${tableHTML('meta-ads','Anuncio', ads, cols)}
     <p class="note">Alcance y frecuencia en totales y conjuntos se suman entre anuncios, así que pueden quedar algo arriba del alcance único que muestra Ads Manager.</p></div>`;
