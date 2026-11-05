@@ -211,6 +211,46 @@ module.exports = async function handler(req, res) {
       remainders.push(`${c.name}: ${Math.round(diff.impresiones)} impresiones`);
     }
   }
+  // Imágenes: imagen original de anuncios de imagen/display y miniatura real de YouTube
+  // para anuncios de video. Si la consulta falla, el dashboard sigue sin imágenes.
+  let imgError = null;
+  try {
+    const mediaRows = await gaql(`
+      SELECT ad_group_ad.ad.id, ad_group_ad.ad.image_ad.image_url,
+             ad_group_ad.ad.video_ad.video.asset, ad_group_ad.ad.video_responsive_ad.videos,
+             ad_group_ad.ad.responsive_display_ad.marketing_images
+      FROM ad_group_ad
+      WHERE ${range} AND metrics.impressions > 0`);
+    const assetOf = {}; const direct = {};
+    for (const r of mediaRows) {
+      const ad = (r.adGroupAd && r.adGroupAd.ad) || {};
+      if (ad.imageAd && ad.imageAd.imageUrl) { direct[ad.id] = ad.imageAd.imageUrl; continue; }
+      const a = (ad.videoAd && ad.videoAd.video && ad.videoAd.video.asset)
+        || ((ad.videoResponsiveAd && ad.videoResponsiveAd.videos) || [])[0]?.asset
+        || ((ad.responsiveDisplayAd && ad.responsiveDisplayAd.marketingImages) || [])[0]?.asset;
+      if (a) assetOf[ad.id] = a;
+    }
+    const names = [...new Set(Object.values(assetOf))];
+    const urlOf = {};
+    for (let i = 0; i < names.length; i += 100) {
+      const list = names.slice(i, i + 100).map(n => `'${n}'`).join(', ');
+      const assets = await gaql(`
+        SELECT asset.resource_name, asset.type, asset.youtube_video_asset.youtube_video_id, asset.image_asset.full_size.url
+        FROM asset WHERE asset.resource_name IN (${list})`);
+      for (const r of assets) {
+        const as = r.asset || {};
+        const yt = as.youtubeVideoAsset && as.youtubeVideoAsset.youtubeVideoId;
+        if (yt) urlOf[as.resourceName] = { src: `https://i.ytimg.com/vi/${yt}/maxresdefault.jpg`, alt: `https://i.ytimg.com/vi/${yt}/hqdefault.jpg` };
+        else if (as.imageAsset && as.imageAsset.fullSize && as.imageAsset.fullSize.url) urlOf[as.resourceName] = { src: as.imageAsset.fullSize.url, alt: null };
+      }
+    }
+    rows.forEach(r => {
+      if (!r.ad_id) return;
+      const im = direct[r.ad_id] ? { src: direct[r.ad_id], alt: null } : (urlOf[assetOf[r.ad_id]] || {});
+      r.imagen = im.src || null; r.imagen_alt = im.alt || null;
+    });
+  } catch (e) { imgError = e.message; }
+
   const daily = [];
   for (const r of dailyRows) {
     const centro = centroDe(r.campaign && r.campaign.name);
@@ -232,6 +272,8 @@ module.exports = async function handler(req, res) {
       campanas_sin_plaza: [...unmatched].sort(),
       campanas_detectadas: [...new Set(rows.map(r => `${r.campana}  →  ${r.centro}, ${TIPO_NOMBRE[r.tipo] || r.tipo}`))].sort(),
       campanas_sin_desglose_por_anuncio: remainders,
+      anuncios_con_imagen: rows.filter(r => r.imagen).length + ' de ' + rows.length,
+      error_imagenes: imgError,
     });
   }
 

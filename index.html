@@ -174,6 +174,34 @@ tbody tr:hover td{ background:var(--accent-soft); }
 .custom-range{ display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; justify-content:flex-end; font-size:.85rem; color:var(--muted); }
 .custom-range input[type=date]{ background:var(--surface); border:1px solid var(--line); color:var(--ink); padding:.35rem .55rem; border-radius:6px; margin-left:.3rem; color-scheme:inherit; }
 .range-label{ font-size:.85rem; color:var(--muted); }
+/* ===== Biblioteca de anuncios ===== */
+.ad-grid{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1rem; align-items:stretch; }
+@media (max-width:1100px){ .ad-grid{ grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:800px){ .ad-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:520px){ .ad-grid{ grid-template-columns:minmax(0,1fr); } }
+.ad-card{ display:flex; flex-direction:column; height:100%; background:var(--surface); border:1px solid var(--line); overflow:hidden; min-width:0; }
+body[data-centro="antara"] .ad-card{ border-radius:18px; }
+body[data-centro="artz"] .ad-card{ border-radius:2px; }
+.ad-media{ position:relative; aspect-ratio:1/1; background:var(--accent-soft); display:grid; place-items:center; overflow:hidden; border-bottom:1px solid var(--line); }
+.ad-media a{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+.ad-media img{ display:block; max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; }
+.ad-noimg{ font-size:.8rem; color:var(--muted); padding:1rem; text-align:center; }
+.ad-rank{ position:absolute; top:.65rem; left:.65rem; min-width:2.2rem; height:2.2rem; padding:0 .5rem; display:grid; place-items:center; background:var(--surface); color:var(--ink); font-family:var(--display); font-size:1.15rem; border-radius:999px; box-shadow:0 1px 4px rgba(0,0,0,.15); }
+.ad-body{ display:flex; flex-direction:column; flex:1; padding:.95rem 1rem 1rem; gap:.35rem; }
+.ad-name{ font-family:var(--body); font-size:.86rem; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
+.ad-camp{ font-size:.76rem; color:var(--muted); line-height:1.35; overflow-wrap:anywhere; }
+.ad-camp span{ font-weight:600; }
+.ad-highlight{ font-size:.8rem; color:var(--muted); margin-top:.15rem; }
+.ad-highlight strong{ font-family:var(--display); font-size:1.35rem; color:var(--ink); font-weight:500; margin-right:.2rem; }
+.ad-metrics{ margin-top:auto; padding-top:.75rem; border-top:1px solid var(--line); display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.6rem .75rem; }
+.ad-metrics dt{ font-size:.7rem; color:var(--muted); }
+.ad-metrics dd{ font-size:.9rem; font-weight:600; font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lib-tools{ display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+.lib-ctl{ display:flex; align-items:center; gap:.4rem; font-size:.85rem; color:var(--muted); }
+.seg{ display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+.seg button{ background:var(--surface); border:none; padding:.45rem .75rem; font-size:.82rem; cursor:pointer; color:var(--muted); }
+.seg button[aria-pressed="true"]{ background:var(--accent); color:var(--on-accent); }
+.lib-more{ margin-top:1rem; border:1px solid var(--line); background:var(--surface); }
 #view.loading{ opacity:.45; pointer-events:none; transition:opacity .2s; }
 .fade-in{ animation:fade .4s ease both; }
 @keyframes fade{ from{ opacity:0; transform:translateY(4px);} to{ opacity:1; transform:none; } }
@@ -255,7 +283,7 @@ function fmtFechaCorta(s){ const d=parseLocal(s); return `${d.getDate()} ${MES_N
    ========================================================================= */
 const hoy = new Date();
 const state = {
-  centro:'artz', plat:'general', objetivo:'all', topBy:'visitas_perfil', search:'', sort:{}, showAll:{},
+  centro:'artz', plat:'general', objetivo:'all', topBy:'visitas_perfil', search:'', sort:{}, showAll:{}, lib:{},
   periodo:{ tipo:'mes', anio:hoy.getFullYear(), mes:hoy.getMonth() },
   custom:{ since: ymd(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), until: todayStr() },
 };
@@ -585,6 +613,77 @@ function renderPeriodo(){
     if(!s || !u) return; state.custom = s<=u ? { since:s, until:u } : { since:u, until:s }; refresh(); };
 }
 
+/* =========================================================================
+   BIBLIOTECA DE ANUNCIOS (tarjetas)
+   Imagen original o la miniatura más grande que entrega la plataforma, sin recorte.
+   Métrica no disponible = «—» (nunca se sustituye por otra).
+   ========================================================================= */
+const dash = (v, f) => (v==null || !isFinite(v)) ? '—' : f(v);
+// Si la imagen principal falla (o YouTube devuelve su miniatura gris de 120 px), usa la alterna;
+// si tampoco hay, muestra el aviso «Imagen no disponible».
+function adImgLoad(img){ if(img.naturalWidth && img.naturalWidth <= 120 && img.dataset.alt){ adImgError(img); } }
+function adImgError(img){
+  const alt = img.dataset.alt;
+  if(alt){ img.dataset.alt=''; img.src = alt; return; }
+  const box = img.closest('.ad-media'); if(box){ img.remove(); box.insertAdjacentHTML('afterbegin','<span class="ad-noimg">Imagen no disponible</span>'); }
+}
+function adMedia(a){
+  if(!a.imagen) return '<span class="ad-noimg">Imagen no disponible</span>';
+  return `<a href="${esc(a.imagen)}" target="_blank" rel="noopener" title="Ver imagen completa"><img src="${esc(a.imagen)}" data-alt="${esc(a.imagen_alt||'')}" alt="${esc(a.name)}" loading="lazy" referrerpolicy="no-referrer" onload="adImgLoad(this)" onerror="adImgError(this)"></a>`;
+}
+// a = { name, campana, imagen, imagen_alt, alcance, impresiones, ctr_unico, frecuencia }
+function adCard(a, opts={}){
+  return `<article class="ad-card fade-in">
+    <div class="ad-media">${adMedia(a)}${opts.rank?`<span class="ad-rank">${opts.rank}</span>`:''}</div>
+    <div class="ad-body">
+      <h3 class="ad-name">${esc(a.name)}</h3>
+      <p class="ad-camp"><span>Campaña</span> ${esc(a.campana||'—')}</p>
+      ${opts.highlight ? `<p class="ad-highlight">${opts.highlight}</p>` : ''}
+      <dl class="ad-metrics">
+        <div><dt>Alcance</dt><dd>${dash(a.alcance, fInt)}</dd></div>
+        <div><dt>Impresiones</dt><dd>${dash(a.impresiones, fInt)}</dd></div>
+        <div><dt>CTR único</dt><dd>${dash(a.ctr_unico, fPct)}</dd></div>
+        <div><dt>Frecuencia</dt><dd>${dash(a.frecuencia, fDec)}</dd></div>
+      </dl>
+    </div>
+  </article>`;
+}
+const LIB_SORTS = [['alcance','Alcance'],['impresiones','Impresiones'],['ctr_unico','CTR único'],['frecuencia','Frecuencia'],['name','Nombre']];
+const LIB_PAGE = 12;
+function libState(id){ return state.lib[id] || (state.lib[id] = { q:'', sort:'alcance', dir:'desc', view:'cards', n:LIB_PAGE }); }
+// Biblioteca con buscador, orden, vista de tarjetas o tabla, y "ver más".
+function libraryHTML(id, title, desc, ads, tableFn){
+  const st = libState(id);
+  const q = st.q.trim().toLowerCase();
+  const list = ads.filter(a => !q || String(a.name).toLowerCase().includes(q) || String(a.campana||'').toLowerCase().includes(q));
+  const dirM = st.dir==='asc' ? 1 : -1;
+  list.sort((a,b)=>{
+    if(st.sort==='name') return dirM*String(a.name).localeCompare(String(b.name));
+    const x=a[st.sort], y=b[st.sort]; const xn = x==null||!isFinite(x), yn = y==null||!isFinite(y);
+    if(xn && yn) return 0; if(xn) return 1; if(yn) return -1;   // sin dato siempre al final
+    return dirM*(x-y);
+  });
+  const shown = list.slice(0, st.n);
+  const body = st.view==='table' ? tableFn(list)
+    : (list.length ? `<div class="ad-grid">${shown.map(a=>adCard(a)).join('')}</div>
+        ${list.length>st.n ? `<button class="more lib-more" data-lib-more="${id}">Ver más anuncios (${list.length-st.n} restantes)</button>` : ''}`
+      : '<div class="table-wrap"><div class="empty">No hay anuncios con estos filtros.</div></div>');
+  return `<div class="section"><div class="top-head"><div><h2 class="section-title">${title}</h2><p class="section-desc" style="margin:0">${desc} ${list.length} anuncio${list.length===1?'':'s'}.</p></div>
+    <div class="lib-tools">
+      <input class="search" type="search" data-lib-q="${id}" placeholder="Buscar anuncio o campaña" value="${esc(st.q)}">
+      <label class="lib-ctl"><span>Ordenar por</span><select data-lib-sort="${id}">${LIB_SORTS.map(([k,l])=>`<option value="${k}" ${k===st.sort?'selected':''}>${l}</option>`).join('')}</select></label>
+      <select data-lib-dir="${id}" aria-label="Dirección"><option value="desc" ${st.dir==='desc'?'selected':''}>Mayor a menor</option><option value="asc" ${st.dir==='asc'?'selected':''}>Menor a mayor</option></select>
+      <div class="seg" role="group" aria-label="Vista"><button data-lib-view="${id}" data-v="cards" aria-pressed="${st.view==='cards'}">Tarjetas</button><button data-lib-view="${id}" data-v="table" aria-pressed="${st.view==='table'}">Tabla</button></div>
+    </div></div>${body}</div>`;
+}
+function bindLibraries(){
+  view.querySelectorAll('[data-lib-q]').forEach(inp=>inp.oninput=e=>{ const id=inp.dataset.libQ; const st=libState(id); st.q=e.target.value; st.n=LIB_PAGE; const pos=e.target.selectionStart; render(); const n=view.querySelector(`[data-lib-q="${id}"]`); if(n){ n.focus(); n.setSelectionRange(pos,pos); } });
+  view.querySelectorAll('[data-lib-sort]').forEach(sel=>sel.onchange=e=>{ const st=libState(sel.dataset.libSort); st.sort=e.target.value; st.dir = e.target.value==='name' ? 'asc' : 'desc'; render(); });
+  view.querySelectorAll('[data-lib-dir]').forEach(sel=>sel.onchange=e=>{ libState(sel.dataset.libDir).dir=e.target.value; render(); });
+  view.querySelectorAll('[data-lib-view]').forEach(b=>b.onclick=()=>{ libState(b.dataset.libView).view=b.dataset.v; render(); });
+  view.querySelectorAll('[data-lib-more]').forEach(b=>b.onclick=()=>{ libState(b.dataset.libMore).n += LIB_PAGE; render(); });
+}
+
 function kpiStrip(items){
   return `<div class="kpis fade-in">${items.map(i=>`<div class="kpi"><div class="kpi-label">${i.l}</div><div class="kpi-value">${i.v}</div>${i.n?`<div class="kpi-note">${i.n}</div>`:''}</div>`).join('')}</div>`;
 }
@@ -664,37 +763,30 @@ function renderMeta(){
     <div><h2 class="section-title">CPM por objetivo</h2><p class="section-desc">Cuánto cuesta cada mil impresiones según el objetivo.</p><div class="panel"><div class="chart-box"><canvas id="c2"></canvas></div></div></div>
   </div>`;
 
-  const adAgg = [...groupBy(rows, r=>r.anuncio+'||'+r.objetivo)].map(([k,rs])=>({ name:rs[0].anuncio, objetivo:rs[0].objetivo, imagen:(rs.find(x=>x.imagen)||{}).imagen||null, ...metaDerive(sum(rs,META_SUM)) }));
-  const topOpts = [['visitas_perfil','Visitas al perfil'],['seguidores','Seguidores IG'],['alcance','Alcance'],['impresiones','Impresiones'],['cpm','CPM más bajo'],['conv','Conversión visita → seguidor']];
+  // Cada anuncio con sus métricas del periodo (una fila de Meta = un anuncio).
+  const adList = rows.map(r=>{ const d = metaDerive(r); return { ...d, name:r.anuncio, campana:r.campana, conjunto:r.conjunto,
+    frecuencia: r.alcance ? r.impresiones/r.alcance : null, ctr_unico: r.ctr_unico ?? null }; });
+  const topOpts = [['visitas_perfil','Visitas al perfil'],['seguidores','Seguidores IG'],['alcance','Alcance'],['impresiones','Impresiones'],['ctr_unico','CTR único'],['cpm','CPM más bajo'],['conv','Conversión visita → seguidor']];
   const by = state.topBy; const asc = by==='cpm';
-  const top = [...adAgg].filter(a=>(by!=='conv'||a.visitas_perfil>50) && (by!=='cpm'||a.impresiones>0)).sort((a,b)=>asc?a[by]-b[by]:b[by]-a[by]).slice(0,5);
-  const maxV = Math.max(...top.map(a=>a[by]))||1;
-  const fmtBy = {visitas_perfil:fInt,seguidores:fIntDash,alcance:fInt,impresiones:fInt,cpm:fMXN2,conv:fPct}[by];
-  h += `<div class="section"><div class="top-head"><div><h2 class="section-title">Top anuncios</h2><p class="section-desc" style="margin:0">Los cinco conceptos con mejor resultado en el periodo y objetivo elegidos.</p></div>
+  const top = adList.filter(a=> a[by]!=null && isFinite(a[by]) && (by!=='conv'||a.visitas_perfil>50) && (by!=='cpm'||a.impresiones>0))
+    .sort((a,b)=>asc?a[by]-b[by]:b[by]-a[by]).slice(0,4);
+  const fmtBy = {visitas_perfil:fInt,seguidores:fInt,alcance:fInt,impresiones:fInt,ctr_unico:fPct,cpm:fMXN2,conv:fPct}[by];
+  const byLabel = topOpts.find(o=>o[0]===by)[1].replace(' más bajo','').toLowerCase();
+  h += `<div class="section"><div class="top-head"><div><h2 class="section-title">Top anuncios</h2><p class="section-desc" style="margin:0">Los cuatro anuncios con mejor resultado en el periodo y objetivo elegidos.</p></div>
     <label><span style="font-size:.85rem;color:var(--muted);margin-right:.5rem">Ordenar por</span><select id="topBy">${topOpts.map(([k,l])=>`<option value="${k}" ${k===by?'selected':''}>${l}</option>`).join('')}</select></label></div>
-    <div class="top-list">${top.map((a,i)=>`<article class="top-card fade-in" style="animation-delay:${i*40}ms">
-      <div class="top-media">${a.imagen ? `<a href="${esc(a.imagen)}" target="_blank" rel="noopener" title="Ver imagen completa">${mediaHTML(a.imagen, a.name, 'top-img')}</a>` : mediaHTML(null, a.name, 'top-img')}<span class="top-rank">${i+1}</span></div>
-      <div class="top-body">
-        <div class="top-name" title="${esc(a.name)}">${esc(a.name)}</div><div class="top-meta">${esc(a.objetivo)}</div>
-        <div class="top-value">${fmtBy(a[by])}<small>${topOpts.find(o=>o[0]===by)[1].toLowerCase()}</small></div>
-        <dl class="top-stats"><div><dt>Gasto</dt><dd>${fMXN(a.gasto)}</dd></div><div><dt>Alcance</dt><dd>${fCompact(a.alcance)}</dd></div><div><dt>CPM</dt><dd>${fMXN2(a.cpm)}</dd></div></dl>
-        <div class="bar"><i style="width:${asc ? (Math.min(...top.map(x=>x.cpm))/a.cpm*100) : (a[by]/maxV*100)}%"></i></div>
-      </div>
-    </article>`).join('') || '<div class="empty">Sin anuncios en este periodo.</div>'}</div></div>`;
+    ${top.length ? `<div class="ad-grid">${top.map((a,i)=>adCard(a,{ rank:i+1, highlight:`<strong>${fmtBy(a[by])}</strong> ${byLabel}` })).join('')}</div>` : '<div class="table-wrap"><div class="empty">Sin anuncios con dato para esta métrica en el periodo.</div></div>'}</div>`;
 
   const cols = showWeb ? [...META_COLS, {k:'clics_enlace',l:'Clics al sitio',f:fInt}] : META_COLS;
   const sets = [...groupBy(rows, r=>r.campana+'||'+r.conjunto)].map(([k,rs])=>({ name:rs[0].conjunto, sub:rs[0].campana, ...metaDerive(sum(rs,META_SUM)) }));
   h += `<div class="section"><h2 class="section-title">Por conjunto de anuncios</h2><p class="section-desc">Solo lo que cada conjunto gastó dentro del periodo elegido. Toca una columna para ordenar.</p>${tableHTML('meta-sets','Conjunto de anuncios', sets, cols, t)}</div>`;
-  const ads = rows.map(r=>({ name:r.anuncio, sub:r.conjunto, thumb:r.imagen||null, ...metaDerive(r) })).filter(a=>!state.search || String(a.name).toLowerCase().includes(state.search.toLowerCase()));
-  h += `<div class="section"><div class="top-head"><div><h2 class="section-title">Por anuncio</h2><p class="section-desc" style="margin:0">Cada fila es un concepto de contenido dentro de su conjunto.</p></div>
-    <input class="search" id="search" type="search" placeholder="Buscar concepto" value="${state.search}"></div>${tableHTML('meta-ads','Anuncio', ads, cols)}
-    <p class="note">Alcance y frecuencia en totales y conjuntos se suman entre anuncios, así que pueden quedar algo arriba del alcance único que muestra Ads Manager.</p></div>`;
+  h += libraryHTML('meta-lib', 'Biblioteca de anuncios', 'Métricas de cada anuncio en el periodo elegido.', adList,
+    list => tableHTML('meta-ads','Anuncio', list.map(a=>({ ...a, sub:a.conjunto, thumb:a.imagen||null })), cols));
+  h += `<p class="note" style="margin-top:-2rem">Alcance y frecuencia en totales y conjuntos se suman entre anuncios, así que pueden quedar algo arriba del alcance único que muestra Ads Manager. «—» indica dato no disponible.</p>`;
 
   view.innerHTML = h;
   view.querySelectorAll('[data-obj]').forEach(b=>b.onclick=()=>{ state.objetivo=b.dataset.obj; render(); });
   document.getElementById('topBy').onchange = e => { state.topBy=e.target.value; render(); };
-  document.getElementById('search').oninput = e => { state.search=e.target.value; const pos=e.target.selectionStart; render(); const n=document.getElementById('search'); n.focus(); n.setSelectionRange(pos,pos); };
-  bindSort(); chartDefaults();
+  bindSort(); bindLibraries(); chartDefaults();
   const byMonth = spendChart('c1', dailyFor('meta', d => state.objetivo==='all' || d.objetivo===state.objetivo));
   if(byMonth) document.getElementById('c1t').textContent = 'Gasto e impresiones por mes';
   const byObj = OBJETIVOS_META.filter(o=>presentes.has(o)).map(o=>({ o, ...metaDerive(sum(base.filter(r=>r.objetivo===o),META_SUM)) }));
@@ -747,9 +839,12 @@ function renderGoogle(){
   </div>`;
   const grupos = [...groupBy(rows,r=>r.grupo)].map(([k,rs])=>({ name:k, sub:rs[0].campana, ...gDerive(sum(rs,G_SUM)) }));
   h += `<div class="section"><h2 class="section-title">Por grupo de anuncios</h2><p class="section-desc">Toca una columna para ordenar.</p>${tableHTML('g-sets','Grupo de anuncios',grupos,G_COLS,t)}</div>`;
-  const ads = [...groupBy(rows,r=>r.grupo+'||'+r.anuncio)].map(([k,rs])=>({ name:rs[0].anuncio, sub:rs[0].grupo, ...gDerive(sum(rs,G_SUM)) }));
-  h += `<div class="section"><h2 class="section-title">Por anuncio</h2><p class="section-desc">Agrupado por anuncio dentro de cada grupo.</p>${tableHTML('g-ads','Anuncio',ads,G_COLS)}</div>`;
-  view.innerHTML = h; bindSort(); chartDefaults();
+  // Google Ads no reporta alcance, CTR único ni frecuencia por anuncio: se muestran como «—».
+  const ads = rows.map(r=>({ ...gDerive(r), name:r.anuncio, campana:r.campana, grupo:r.grupo, imagen:r.imagen||null, imagen_alt:r.imagen_alt||null,
+    alcance:null, ctr_unico:null, frecuencia:null }));
+  h += libraryHTML('g-lib', 'Biblioteca de anuncios', 'Google Ads no reporta alcance, CTR único ni frecuencia por anuncio («—»).', ads,
+    list => tableHTML('g-ads','Anuncio', list.map(a=>({ ...a, sub:a.grupo, thumb:a.imagen||null })), G_COLS));
+  view.innerHTML = h; bindSort(); bindLibraries(); chartDefaults();
   charts.push(new Chart(document.getElementById('c1'), { data:{ labels:grupos.map(g=>g.name), datasets:[
       {type:'bar',order:1,label:'Clics',data:grupos.map(g=>g.clics),backgroundColor:css('--c3'),yAxisID:'y',borderRadius:2},
       {type:'line',order:0,label:'CTR',data:grupos.map(g=>g.ctr*100),borderColor:css('--c1'),backgroundColor:css('--c1'),yAxisID:'y1',pointRadius:4,tension:.3} ]},

@@ -50,7 +50,7 @@ const OBJETIVO_POR_NOMBRE = [
 const OBJETIVO_POR_API = { OUTCOME_AWARENESS: 'Alcance', OUTCOME_ENGAGEMENT: 'Interacción' };
 
 const AD_FIELDS = ['campaign_name', 'adset_name', 'ad_name', 'ad_id', 'objective',
-  'spend', 'reach', 'impressions', 'inline_link_clicks', 'actions'];
+  'spend', 'reach', 'impressions', 'inline_link_clicks', 'unique_ctr', 'actions'];
 const PROFILE_FIELD = 'instagram_profile_visits';
 // "Seguimientos de Instagram" de Ads Manager. Meta no documenta aún el nombre
 // del campo en la API, así que se prueban estos nombres y se usa el primero
@@ -162,12 +162,13 @@ async function fetchImages(token, adIds) {
     try {
       const j = await graphGet(token, '', {
         ids: ids.join(','), fields: 'image_url,thumbnail_url',
-        thumbnail_width: '600', thumbnail_height: '600',
+        thumbnail_width: '1080', thumbnail_height: '1080',
       });
-      Object.entries(j).forEach(([cid, v]) => { imgOf[cid] = (v && (v.image_url || v.thumbnail_url)) || null; });
+      // image_url = imagen original (anuncios de imagen); thumbnail_url = miniatura más grande disponible.
+      Object.entries(j).forEach(([cid, v]) => { imgOf[cid] = v ? { src: v.image_url || v.thumbnail_url || null, alt: v.image_url ? (v.thumbnail_url || null) : null } : null; });
     } catch (e) { errors.push(e.message); }
   }
-  adIds.forEach(id => { out[id] = imgOf[creativeOf[id]] || null; });
+  adIds.forEach(id => { out[id] = imgOf[creativeOf[id]] || { src: null, alt: null }; });
   return { images: out, errors };
 }
 
@@ -229,6 +230,8 @@ module.exports = async function handler(req, res) {
         ? num(r[followField])
         : maxAction(r.actions, t => /follow/i.test(t) && !/unfollow/i.test(t)),
       clics_enlace: num(r.inline_link_clicks),
+      // CTR único de Meta llega en porcentaje (1.5 = 1.5 %); se guarda como fracción.
+      ctr_unico: r.unique_ctr == null ? null : num(r.unique_ctr) / 100,
     });
   }
   // Imágenes de los anuncios (si falla, el dashboard sigue sin imágenes).
@@ -237,7 +240,7 @@ module.exports = async function handler(req, res) {
     const ids = [...new Set(rows.map(r => r.ad_id).filter(Boolean))];
     const { images, errors } = await fetchImages(token, ids);
     imgErrors = errors;
-    rows.forEach(r => { r.imagen = images[r.ad_id] || null; });
+    rows.forEach(r => { const im = images[r.ad_id] || {}; r.imagen = im.src || null; r.imagen_alt = im.alt || null; });
   } catch (e) { imgErrors.push(e.message); }
 
   const daily = [];
