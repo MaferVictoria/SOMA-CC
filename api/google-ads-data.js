@@ -211,32 +211,58 @@ module.exports = async function handler(req, res) {
       remainders.push(`${c.name}: ${Math.round(diff.impresiones)} impresiones`);
     }
   }
-  // Imágenes: imagen original de anuncios de imagen/display y miniatura real de YouTube
-  // para anuncios de video. Si la consulta falla, el dashboard sigue sin imágenes.
-  let imgError = null;
+  // Imágenes: imagen original y miniatura real de YouTube según el tipo de anuncio
+  // (imagen, display responsivo, video, Demand Gen). Cada tipo se consulta por separado:
+  // si un campo no existe en la versión de la API, solo falla ese tipo y no los demás.
+  const imgErrors = [];
   try {
-    const mediaRows = await gaql(`
-      SELECT ad_group_ad.ad.id, ad_group_ad.ad.image_ad.image_url,
-             ad_group_ad.ad.video_ad.video.asset, ad_group_ad.ad.video_responsive_ad.videos,
-             ad_group_ad.ad.responsive_display_ad.marketing_images
-      FROM ad_group_ad
-      WHERE ${range} AND metrics.impressions > 0`);
-    const assetOf = {}; const direct = {};
-    for (const r of mediaRows) {
-      const ad = (r.adGroupAd && r.adGroupAd.ad) || {};
-      if (ad.imageAd && ad.imageAd.imageUrl) { direct[ad.id] = ad.imageAd.imageUrl; continue; }
-      const a = (ad.videoAd && ad.videoAd.video && ad.videoAd.video.asset)
-        || ((ad.videoResponsiveAd && ad.videoResponsiveAd.videos) || [])[0]?.asset
-        || ((ad.responsiveDisplayAd && ad.responsiveDisplayAd.marketingImages) || [])[0]?.asset;
-      if (a) assetOf[ad.id] = a;
+    const adIds = [...new Set(rows.map(r => r.ad_id).filter(Boolean))].filter(id => /^\d+$/.test(String(id)));
+    const direct = {};      // ad_id → URL directa
+    const assetsOf = {};    // ad_id → [resource names en orden de preferencia]
+    const push = (id, a) => { if (!a) return; (assetsOf[id] = assetsOf[id] || []).includes(a) || assetsOf[id].push(a); };
+    const list = arr => (arr || []).map(x => x && x.asset).filter(Boolean);
+    const groups = [
+      { name: 'imagen', fields: ['ad_group_ad.ad.image_ad.image_url'],
+        read: (id, ad) => { if (ad.imageAd && ad.imageAd.imageUrl) direct[id] = ad.imageAd.imageUrl; } },
+      { name: 'display responsivo', fields: ['ad_group_ad.ad.responsive_display_ad.square_marketing_images', 'ad_group_ad.ad.responsive_display_ad.marketing_images'],
+        read: (id, ad) => { const x = ad.responsiveDisplayAd || {}; [...list(x.squareMarketingImages), ...list(x.marketingImages)].forEach(a => push(id, a)); } },
+      { name: 'Demand Gen imagen', fields: ['ad_group_ad.ad.demand_gen_multi_asset_ad.square_marketing_images', 'ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images', 'ad_group_ad.ad.demand_gen_multi_asset_ad.portrait_marketing_images'],
+        read: (id, ad) => { const x = ad.demandGenMultiAssetAd || {}; [...list(x.squareMarketingImages), ...list(x.marketingImages), ...list(x.portraitMarketingImages)].forEach(a => push(id, a)); } },
+      { name: 'Demand Gen video', fields: ['ad_group_ad.ad.demand_gen_video_responsive_ad.videos'],
+        read: (id, ad) => { list((ad.demandGenVideoResponsiveAd || {}).videos).forEach(a => push(id, a)); } },
+      { name: 'video', fields: ['ad_group_ad.ad.video_ad.video.asset'],
+        read: (id, ad) => { push(id, ad.videoAd && ad.videoAd.video && ad.videoAd.video.asset); } },
+      { name: 'video responsivo', fields: ['ad_group_ad.ad.video_responsive_ad.videos'],
+        read: (id, ad) => { list((ad.videoResponsiveAd || {}).videos).forEach(a => push(id, a)); } },
+    ];
+    for (let i = 0; i < adIds.length; i += 200) {
+      const idList = adIds.slice(i, i + 200).join(', ');
+      for (const g of groups) {
+        try {
+          const res = await gaql(`SELECT ad_group_ad.ad.id, ${g.fields.join(', ')} FROM ad_group_ad WHERE ad_group_ad.ad.id IN (${idList})`);
+          res.forEach(r => { const ad = (r.adGroupAd && r.adGroupAd.ad) || {}; if (ad.id) g.read(String(ad.id), ad); });
+        } catch (e) { imgErrors.push(`${g.name}: ${e.message}`); }
+      }
     }
-    const names = [...new Set(Object.values(assetOf))];
+    // Respaldo: activos ligados al anuncio (cubre formatos que no caen en los grupos de arriba).
+    const pendientes = adIds.filter(id => !direct[id] && !(assetsOf[id] || []).length);
+    for (let i = 0; i < pendientes.length; i += 200) {
+      try {
+        const res = await gaql(`SELECT ad_group_ad.ad.id, asset.resource_name, ad_group_ad_asset_view.field_type
+          FROM ad_group_ad_asset_view WHERE ad_group_ad.ad.id IN (${pendientes.slice(i, i + 200).join(', ')})`);
+        const pref = ['SQUARE_MARKETING_IMAGE', 'MARKETING_IMAGE', 'PORTRAIT_MARKETING_IMAGE', 'YOUTUBE_VIDEO', 'VIDEO'];
+        res.sort((a, b) => pref.indexOf((a.adGroupAdAssetView || {}).fieldType) - pref.indexOf((b.adGroupAdAssetView || {}).fieldType))
+          .forEach(r => { const t = (r.adGroupAdAssetView || {}).fieldType; if (pref.includes(t)) push(String(r.adGroupAd.ad.id), r.asset && r.asset.resourceName); });
+      } catch (e) { imgErrors.push(`activos del anuncio: ${e.message}`); }
+    }
+    // URL real de cada activo: imagen en tamaño completo o miniatura de YouTube.
+    const names = [...new Set(Object.values(assetsOf).flat())];
     const urlOf = {};
     for (let i = 0; i < names.length; i += 100) {
-      const list = names.slice(i, i + 100).map(n => `'${n}'`).join(', ');
+      const inList = names.slice(i, i + 100).map(n => `'${n}'`).join(', ');
       const assets = await gaql(`
         SELECT asset.resource_name, asset.type, asset.youtube_video_asset.youtube_video_id, asset.image_asset.full_size.url
-        FROM asset WHERE asset.resource_name IN (${list})`);
+        FROM asset WHERE asset.resource_name IN (${inList})`);
       for (const r of assets) {
         const as = r.asset || {};
         const yt = as.youtubeVideoAsset && as.youtubeVideoAsset.youtubeVideoId;
@@ -246,10 +272,12 @@ module.exports = async function handler(req, res) {
     }
     rows.forEach(r => {
       if (!r.ad_id) return;
-      const im = direct[r.ad_id] ? { src: direct[r.ad_id], alt: null } : (urlOf[assetOf[r.ad_id]] || {});
+      const id = String(r.ad_id);
+      let im = direct[id] ? { src: direct[id], alt: null } : null;
+      if (!im) { const first = (assetsOf[id] || []).find(a => urlOf[a]); im = first ? urlOf[first] : {}; }
       r.imagen = im.src || null; r.imagen_alt = im.alt || null;
     });
-  } catch (e) { imgError = e.message; }
+  } catch (e) { imgErrors.push(e.message); }
 
   const daily = [];
   for (const r of dailyRows) {
@@ -273,7 +301,7 @@ module.exports = async function handler(req, res) {
       campanas_detectadas: [...new Set(rows.map(r => `${r.campana}  →  ${r.centro}, ${TIPO_NOMBRE[r.tipo] || r.tipo}`))].sort(),
       campanas_sin_desglose_por_anuncio: remainders,
       anuncios_con_imagen: rows.filter(r => r.imagen).length + ' de ' + rows.length,
-      error_imagenes: imgError,
+      errores_imagenes: imgErrors,
     });
   }
 
