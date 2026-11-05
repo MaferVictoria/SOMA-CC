@@ -840,7 +840,8 @@ function renderGoogle(){
   const grupos = [...groupBy(rows,r=>r.grupo)].map(([k,rs])=>({ name:k, sub:rs[0].campana, ...gDerive(sum(rs,G_SUM)) }));
   h += `<div class="section"><h2 class="section-title">Por grupo de anuncios</h2><p class="section-desc">Toca una columna para ordenar.</p>${tableHTML('g-sets','Grupo de anuncios',grupos,G_COLS,t)}</div>`;
   // Google Ads no reporta alcance, CTR único ni frecuencia por anuncio: se muestran como «—».
-  const ads = rows.map(r=>({ ...gDerive(r), name:r.anuncio, campana:r.campana, grupo:r.grupo, imagen:r.imagen||null, imagen_alt:r.imagen_alt||null,
+  // La fila "Sin desglose por anuncio" solo cuadra totales (no es un anuncio): cuenta en KPIs y grupos, no en la biblioteca.
+  const ads = rows.filter(r=>r.ad_id).map(r=>({ ...gDerive(r), name:r.anuncio, campana:r.campana, grupo:r.grupo, imagen:r.imagen||null, imagen_alt:r.imagen_alt||null,
     alcance:null, ctr_unico:null, frecuencia:null }));
   h += libraryHTML('g-lib', 'Biblioteca de anuncios', 'Google Ads no reporta alcance, CTR único ni frecuencia por anuncio («—»).', ads,
     list => tableHTML('g-ads','Anuncio', list.map(a=>({ ...a, sub:a.grupo, thumb:a.imagen||null })), G_COLS));
