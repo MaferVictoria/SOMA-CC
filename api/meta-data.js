@@ -144,32 +144,51 @@ async function detectFollowField(token, accountId, since, until) {
   return null;
 }
 
-// Imagen de cada anuncio: anuncio → creativo → image_url o miniatura grande.
+// Lote de consultas a la Graph API (hasta 50 por llamada). Reemplaza al parámetro
+// "ids", que Meta dejó de aceptar a partir de la v26.
+async function graphBatch(token, relativeUrls) {
+  const out = [];
+  for (let i = 0; i < relativeUrls.length; i += 50) {
+    const batch = relativeUrls.slice(i, i + 50).map(u => ({ method: 'GET', relative_url: u }));
+    const res = await fetch(`https://graph.facebook.com/${API_VERSION}/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ access_token: token, include_headers: 'false', batch: JSON.stringify(batch) }),
+    });
+    const json = await res.json();
+    if (!res.ok || !Array.isArray(json)) {
+      throw new Error((json && json.error && json.error.message) || `HTTP ${res.status}`);
+    }
+    json.forEach(item => {
+      let body = null;
+      try { body = item && item.body ? JSON.parse(item.body) : null; } catch (e) {}
+      out.push(item && item.code === 200 ? { ok: true, body } : { ok: false, error: (body && body.error && body.error.message) || `HTTP ${item && item.code}` });
+    });
+  }
+  return out;
+}
+
+// Imagen de cada anuncio: anuncio → creativo → image_url (original) o la miniatura más grande.
 async function fetchImages(token, adIds) {
   const out = {};
-  const errors = [];
-  const chunk = (arr, n) => arr.reduce((a, x, i) => (i % n ? a[a.length - 1].push(x) : a.push([x]), a), []);
+  const errors = new Set();
   const creativeOf = {};
-  for (const ids of chunk(adIds, 50)) {
-    try {
-      const j = await graphGet(token, '', { ids: ids.join(','), fields: 'creative{id}' });
-      Object.entries(j).forEach(([adId, v]) => { if (v && v.creative) creativeOf[adId] = v.creative.id; });
-    } catch (e) { errors.push(e.message); }
-  }
+  const r1 = await graphBatch(token, adIds.map(id => `${id}?fields=creative{id}`));
+  r1.forEach((r, i) => {
+    if (r.ok && r.body && r.body.creative) creativeOf[adIds[i]] = r.body.creative.id;
+    else if (!r.ok) errors.add(r.error);
+  });
   const creativeIds = [...new Set(Object.values(creativeOf))];
   const imgOf = {};
-  for (const ids of chunk(creativeIds, 50)) {
-    try {
-      const j = await graphGet(token, '', {
-        ids: ids.join(','), fields: 'image_url,thumbnail_url',
-        thumbnail_width: '1080', thumbnail_height: '1080',
-      });
-      // image_url = imagen original (anuncios de imagen); thumbnail_url = miniatura más grande disponible.
-      Object.entries(j).forEach(([cid, v]) => { imgOf[cid] = v ? { src: v.image_url || v.thumbnail_url || null, alt: v.image_url ? (v.thumbnail_url || null) : null } : null; });
-    } catch (e) { errors.push(e.message); }
-  }
+  const r2 = await graphBatch(token, creativeIds.map(id => `${id}?fields=image_url,thumbnail_url&thumbnail_width=1080&thumbnail_height=1080`));
+  r2.forEach((r, i) => {
+    const v = r.ok ? r.body : null;
+    if (!r.ok) errors.add(r.error);
+    // image_url = imagen original (anuncios de imagen); thumbnail_url = miniatura más grande disponible.
+    imgOf[creativeIds[i]] = v ? { src: v.image_url || v.thumbnail_url || null, alt: v.image_url ? (v.thumbnail_url || null) : null } : null;
+  });
   adIds.forEach(id => { out[id] = imgOf[creativeOf[id]] || { src: null, alt: null }; });
-  return { images: out, errors };
+  return { images: out, errors: [...errors] };
 }
 
 module.exports = async function handler(req, res) {
